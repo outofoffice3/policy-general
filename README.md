@@ -103,7 +103,7 @@ type AWSAccount struct {
 
 ### Execution 
 
-1. Receive cloudwatch event and serialize event.Details into **pgevents.ConfigEvent type**
+1. Receive cloudwatch event and serialize event.Details into **evalevents.ConfigEvent type**
 ```go 
 type ConfigEvent struct {
 	Version          string `json:"version"`
