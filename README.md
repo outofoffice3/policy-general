@@ -10,6 +10,7 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
 
 ## Table of Contents
 - [Overview](#overview)
+- [Prerequisites](#prerequisites)
 - [How it works](#how-it-works)
   - [Configuration](#configuration)
   - [Initialization](#initialization)
@@ -25,6 +26,21 @@ Policy General has two components:
 2. Lambda Function integrated with the custom rule
 
 This solution enhances security and compliance by enforcing IAM policy restrictions across multiple AWS accounts. The integration with AWS Config facilitates continuous detection through scheduled rule runs, providing flexibility for customized checks on a weekly, daily, or hourly basis.
+
+## Prerequisites
+
+Before deploying this solution, ensure your local development environment is equipped with the following:
+
+- **Go Programming Language (v1.20+)**:
+Download and install Go from the [official website](https://go.dev/dl/).
+
+- **AWS SAM CLI**:
+Build, test, and deploy serverless applications using the AWS SAM CLI. Install it as per the [AWS SAM CLI Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
+
+- **AWS CDK**:
+Deploy infrastructure as code with the AWS Cloud Development Kit. [Install the AWS CDK](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install) following the guidance in the AWS CDK Getting Started Guide.
+
+Ensure these prerequisites are correctly configured for a smooth deployment. Refer to each tool's documentation for the latest installation instructions.
 
 ## How it works
 
@@ -63,7 +79,7 @@ Policy General is configured using a JSON file stored in S3. This configuration 
 
 ### Initialization 
 
-1. Reads `CONFIG_FILE_BUCKET_NAME` and `CONFIG_FILE_KEY` from environment variable, loads config file from s3 and serializes file into **pgtypes.Config** struct 
+1. Reads `CONFIG_FILE_BUCKET_NAME` and `CONFIG_FILE_KEY` from environment variable, loads config file from s3 and serializes file into **evaltypes.Config** struct 
 ```go
 // Config represents the overall configuration structure.
 type Config struct {
