@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sam-lambda
+
+  Sample SAM Template for sam-lambda
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 128
+
+    Tracing: Active
+Resources:
+  AWSConfigRuleLambda:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Metadata:
+      BuildMethod: go1.x
+    Properties:
+      CodeUri: ../../
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+      - arm64
+      Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
+        Variables:
+          CONFIG_FILE_BUCKET_NAME: policy-general-2023
+          CONFIG_FILE : config.json
+
+Outputs:
+  AWSConfigRuleLambda:
+    Description: First Lambda Function ARN
+    Value: !GetAtt AWSConfigRuleLambda.Arn
+  HelloWorldFunctionIamRole:
+    Description: Implicit IAM Role created for Hello World function
+    Value: !GetAtt HelloWorldFunctionRole.Arn
