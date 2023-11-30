@@ -3,7 +3,6 @@ package evaluator
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"regexp"
@@ -22,8 +21,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/outofoffice3/common/logger"
-	"github.com/outofoffice3/policy-general/pkg/pgevents"
-	"github.com/outofoffice3/policy-general/pkg/pgtypes"
+	"github.com/outofoffice3/policy-general/pkg/evaluator/evalevents"
+	"github.com/outofoffice3/policy-general/pkg/evaluator/evaltypes"
 )
 
 /*
@@ -38,21 +37,64 @@ Evaluator interface is responsible for the following :
 
 */
 
-var (
-	policyGeneral Evaluator
-)
-
 type Evaluator interface {
 	// entry point for evaluator interface.  Handles serialized config event from cloudwatch
-	HandleConfigEvent(event pgevents.ConfigEvent) []pgtypes.ComplianceEvaluation
+	HandleConfigEvent(event evalevents.ConfigEvent) error
+
+	// ###############################################################################################################
+	// PROCESSING COMPLIANCE CHECKING METHODS
+	// ###############################################################################################################
+
+	// check identity policies compliance for all iam roles in given aws account
+	ProcessComplianceForRoles(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation)
+	// check identity policies compliance for all iam users in a given aws account
+	ProcessComplianceForUsers(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation)
+	// check identity policies compliance for both iam users and iam roles in a given aws account
+	ProcessComplianceForAll(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation)
+
+	// ###############################################################################################################
+	// DATA VALIDATION METHODS
+	// ###############################################################################################################
+
 	// validate restricted actions from configuration file
 	IsValidAction(action string) bool
 	// validate scope value
 	IsValidScope(scope string) bool
 	// evaulate if a policy document is compliant
-	IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (pgtypes.ComplianceResult, error)
+	IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (evaltypes.ComplianceResult, error)
 	// send evaluation response to AWS config
-	SendEvaluations(evaluations []configServiceTypes.Evaluation) error
+	SendEvaluations(evaluations []configServiceTypes.Evaluation)
+
+	// ###############################################################################################################
+	// GETTER & SETTER METHODS
+	// ###############################################################################################################
+
+	// sets scope based on config file
+	SetScope(scope string)
+	// get scope
+	GetScope() string
+	// get result token
+	GetResultToken() string
+	// set result token
+	SetResultToken(token string)
+	// return logger
+	GetLogger() logger.Logger
+	// return AWS Config Client
+	GetAwsConfigClient() *configservice.Client
+	// set AWS Config Client
+	SetAwsConfigClient(client *configservice.Client)
+	// return AWS IAM Client
+	GetAwsIamClient(accountId string) *iam.Client
+	// set AWS IAM Client
+	SetAwsIamClient(accountId string, client *iam.Client)
+	// return AWS Access Analyzer Client
+	GetAwsAccessAnalyzerClient(accountId string) *accessanalyzer.Client
+	// set AWS Access Analyzer Client
+	SetAwsAccessAnalyzerClient(accountId string, client *accessanalyzer.Client)
+	// return restricted actions
+	GetRestrictedActions() []string
+	// append restricted actions
+	AppendRestrictedAction(action string)
 }
 
 type _Evaluator struct {
@@ -66,8 +108,12 @@ type _Evaluator struct {
 	restrictedActions       []string                          // restricted actions
 }
 
+// ###############################################################################################################
+// INTERFACE INITIALIZATION
+// ###############################################################################################################
+
 // initialize evaluator
-func Init(logger logger.Logger) {
+func Init(log logger.Logger) Evaluator {
 	/*
 			To initialize, evaluator expects a config file in the following format :
 			{
@@ -91,7 +137,7 @@ func Init(logger logger.Logger) {
 		}
 
 		The config file will be stored in S3 and the object key will be loaded in the environment
-		variable CONFIG_FILE_KEY.  Read the file from s3 and serialze into the pgtypes.Config type.
+		variable CONFIG_FILE_KEY.  Read the file from s3 and serialze into the evaltypes.Config type.
 
 		type Config struct {
 			AwsAccounts []AwsAccount `json:"awsAccounts"`
@@ -103,19 +149,31 @@ func Init(logger logger.Logger) {
 		They [key] = accound id and [value] = *iam.Client.  Set the scope based on the config file.
 		Validate each action from the config file.
 	*/
-	logger.Infof("evaluator init started")
-	policyGeneral := NewEvaluator()
-	policyGeneral.Logger = logger
+	var (
+		defaultLogger       logger.Logger
+		complianceEvaluator Evaluator
+	)
+	// initialize default logger if logger is nil
+	if log == nil {
+		defaultLogger = logger.NewConsoleLogger(logger.LogLevelInfo)
+		complianceEvaluator = newEvaluator(defaultLogger)
+	} else {
+		complianceEvaluator = newEvaluator(log)
 
+	}
+	sos := complianceEvaluator.GetLogger()
+	sos.Infof("evaluator init started")
+
+	// read env vars for config file location
 	evaluatorConfigBucketName := os.Getenv("CONFIG_FILE_BUCKET_NAME")
 	evaluatorConfigObjectKey := os.Getenv("CONFIG_FILE_KEY")
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	// return errors
 	if err != nil {
 		initErr := InitError{
-			message: err.Error(),
+			Message: err.Error(),
 		}
-		handleError(initErr)
+		HandleError(initErr)
 	}
 
 	// retrieve config file from s3
@@ -127,72 +185,79 @@ func Init(logger logger.Logger) {
 	// return errors
 	if err != nil {
 		initErr := InitError{
-			message: err.Error(),
+			Message: err.Error(),
 		}
-		handleError(initErr)
+		HandleError(initErr)
 	}
 
+	// read file contents and serialize to evaltypes.Config struct
+	var policyGeneralConfig evaltypes.Config
 	objectContent, err := io.ReadAll(getObjectOutput.Body)
 	// return errors
 	if err != nil {
 		initErr := InitError{
-			message: err.Error(),
+			Message: err.Error(),
 		}
-		handleError(initErr)
+		HandleError(initErr)
 	}
-
-	var policyGeneralConfig pgtypes.Config
 	err = json.Unmarshal(objectContent, &policyGeneralConfig)
 	// return errors
 	if err != nil {
 		initErr := InitError{
-			message: err.Error(),
+			Message: err.Error(),
 		}
-		handleError(initErr)
+		HandleError(initErr)
 	}
 
 	// validate scope from config file
-	if !policyGeneral.IsValidScope(policyGeneralConfig.Scope) {
-		logger.Errorf("invalid scope [%v] in config file", policyGeneralConfig.Scope)
-		handleError(InitError{
-			message: "invalid scope value in config file",
+	if !complianceEvaluator.IsValidScope(policyGeneralConfig.Scope) {
+		sos.Errorf("invalid scope [%v] in config file", policyGeneralConfig.Scope)
+		HandleError(InitError{
+			Message: "invalid scope value in config file",
 		})
 	}
-	policyGeneral.SetScope(policyGeneralConfig.Scope)
+	complianceEvaluator.SetScope(policyGeneralConfig.Scope)
 
-	// initialize aws config client
-	policyGeneral.configClient = configservice.NewFromConfig(cfg)
+	// initialize aws config and set to evaluator interface
+	configClient := configservice.NewFromConfig(cfg)
+	complianceEvaluator.SetAwsConfigClient(configClient)
+
 	// get assume role provider, assume the respective role and load client map
 	stsClient := sts.NewFromConfig(cfg)
 	for _, awsAccount := range policyGeneralConfig.AWSAccounts {
 		creds := stscreds.NewAssumeRoleProvider(stsClient, awsAccount.RoleName)
 		cfg.Credentials = aws.NewCredentialsCache(creds)
 		iamClient := iam.NewFromConfig(cfg)
-		policyGeneral.iamClientMap[awsAccount.AccountID] = iamClient
-		logger.Debugf("iam client [%v] loaded to map with role [%v]", awsAccount.AccountID, awsAccount.RoleName)
+		complianceEvaluator.SetAwsIamClient(awsAccount.AccountID, iamClient)
+		sos.Debugf("iam client [%v] loaded to map with role [%v]", awsAccount.AccountID, awsAccount.RoleName)
 		accessAnalzyerClient := accessanalyzer.NewFromConfig(cfg)
-		policyGeneral.accessAnalyzerClientMap[awsAccount.AccountID] = accessAnalzyerClient
-		logger.Debugf("access analyzer client [%v] loaded to map with role [%v]", awsAccount.AccountID, awsAccount.RoleName)
+		complianceEvaluator.SetAwsAccessAnalyzerClient(awsAccount.AccountID, accessAnalzyerClient)
+		sos.Debugf("access analyzer client [%v] loaded to map with role [%v]", awsAccount.AccountID, awsAccount.RoleName)
 	}
-	logger.Debugf("iam & access analyzer clients successfully loaded to evaluator interface client maps")
+	sos.Debugf("iam & access analyzer clients successfully loaded to evaluator interface client maps")
 
 	// validate actions from config file
 	for _, action := range policyGeneralConfig.RestrictedActions {
-		if !policyGeneral.IsValidAction(action) {
-			logger.Errorf("invalid action [%v] in config file", action)
-			handleError(InitError{
-				message: "invalid restriced action in config file",
+		if !complianceEvaluator.IsValidAction(action) {
+			sos.Errorf("invalid action [%v] in config file", action)
+			HandleError(InitError{
+				Message: "invalid restriced action in config file",
 			})
 		}
 		// add action to policy general
-		policyGeneral.restrictedActions = append(policyGeneral.restrictedActions, action)
-		logger.Debugf("action [%v] added to policy general")
+		complianceEvaluator.AppendRestrictedAction(action)
+		sos.Debugf("action [%v] added to evaluator interface")
 	}
-	logger.Infof("evaluator package successfully initialized")
+	sos.Infof("evaluator package successfully initialized")
+	return complianceEvaluator
 }
 
+// ###############################################################################################################
+// INTERFACE CONSTRUCTOR
+// ###############################################################################################################
+
 // create new evaluator
-func NewEvaluator() *_Evaluator {
+func newEvaluator(logger logger.Logger) *_Evaluator {
 	return &_Evaluator{
 		wg:                      &sync.WaitGroup{},
 		scope:                   "",
@@ -200,44 +265,42 @@ func NewEvaluator() *_Evaluator {
 		configClient:            nil,
 		iamClientMap:            make(map[string]*iam.Client),
 		accessAnalyzerClientMap: make(map[string]*accessanalyzer.Client),
-		Logger:                  nil,
+		Logger:                  logger,
 		restrictedActions:       nil,
 	}
 }
 
-// set scope
-func (e *_Evaluator) SetScope(scope string) {
-	e.scope = scope
-}
+// ###############################################################################################################
+// INTERFACE ENTRY POINT
+// ###############################################################################################################
 
 // handle config event
-func (e *_Evaluator) HandleConfigEvent(event pgevents.ConfigEvent) []pgtypes.ComplianceEvaluation {
-	e.resultToken = event.ResultToken                                          // set result token
-	resultChan := make(chan pgtypes.ComplianceEvaluation, len(e.iamClientMap)) // result channel to send / receive results on
+func (e *_Evaluator) HandleConfigEvent(event evalevents.ConfigEvent) error {
+	e.SetResultToken(event.ResultToken)
+	resultsBuffer := make(chan evaltypes.ComplianceEvaluation, len(e.iamClientMap)) // buffered channel to send / receive results on
 	// loop through accounts in client map and process compliance check in go routine
 	for accountId := range e.iamClientMap {
-		e.wg.Add(1)                                        // increment wait group counter
-		go e.ProcessComplianceCheck(accountId, resultChan) // process check in go routine
+		e.ProcessComplianceCheck(accountId, resultsBuffer) // process check in go routine
 		e.Logger.Debugf("processing compliance check for account [%v]", accountId)
 	}
 
-	go func(wg *sync.WaitGroup, resultChannel chan pgtypes.ComplianceEvaluation) {
+	go func(wg *sync.WaitGroup, resultChannel chan evaltypes.ComplianceEvaluation) {
 		wg.Wait() // wait for results to be processed
 		e.Logger.Debugf("closing results channel")
-		close(resultChan)
-	}(e.wg, resultChan)
+		close(resultsBuffer)
+	}(e.wg, resultsBuffer)
 
 	// read results from results channel
 	var batchEvaluations []configServiceTypes.Evaluation
 	maxBatchSize := 100
 	currentIndex := 0
-	for result := range resultChan {
+	for result := range resultsBuffer {
 		e.Logger.Debugf("result received : %v", result)
 		if result.ErrMsg != "" {
 			e.Logger.Errorf("error processing compliance check for account [%v] : %v", result.AccountId, result.ErrMsg)
 		}
 		evaulation := configServiceTypes.Evaluation{
-			ComplianceResourceType: aws.String(result.ResourceType),
+			ComplianceResourceType: aws.String(string(result.ResourceType)),
 			ComplianceResourceId:   aws.String(result.Arn),
 			ComplianceType:         result.Compliance,
 			Annotation:             aws.String(result.Annotation),
@@ -249,92 +312,41 @@ func (e *_Evaluator) HandleConfigEvent(event pgevents.ConfigEvent) []pgtypes.Com
 
 		// check if batch is max size, if so, send to aws config and reset
 		if currentIndex >= maxBatchSize {
-			err := e.SendEvaluations(batchEvaluations)
-			if err != nil {
-				executionErr := ExecutionError{
-					service: AWS_CONFIG,
-					message: err.Error(),
-				}
-				handleError(executionErr)
-			}
+			e.SendEvaluations(batchEvaluations)
 			currentIndex = 0
 			continue
 		}
 	}
 	// send remaining results to aws config
-	err := e.SendEvaluations(batchEvaluations)
-	if err != nil {
-		executionErr := ExecutionError{
-			service: AWS_CONFIG,
-			message: err.Error(),
-		}
-		handleError(executionErr)
-	}
+	e.SendEvaluations(batchEvaluations)
 	return nil
 }
 
+// ###############################################################################################################
+// PROCESSING COMPLIANCE INTERFACE METHODS
+// ###############################################################################################################
+
 // process compliance check for an aws account
-func (e *_Evaluator) ProcessComplianceCheck(accountId string, resultChan chan<- pgtypes.ComplianceEvaluation) error {
-	defer e.wg.Done()
+func (e *_Evaluator) ProcessComplianceCheck(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation) error {
 	switch strings.ToLower(e.scope) {
 	case "roles":
 		e.wg.Add(1)
-		go e.ProcessComplianceForRoles(accountId, resultChan)
+		go e.ProcessComplianceForRoles(accountId, resultsBuffer)
 	case "users":
 		e.wg.Add(1)
-		go e.ProcessComplianceForUsers(accountId, resultChan)
+		go e.ProcessComplianceForUsers(accountId, resultsBuffer)
 	case "all":
 		e.wg.Add(1)
-		go e.ProcessComplianceForAll(accountId, resultChan)
+		go e.ProcessComplianceForAll(accountId, resultsBuffer)
 	}
 	return nil
 }
 
 // process compliance for iam roles
-func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultChan chan<- pgtypes.ComplianceEvaluation) {
+func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation) {
 	defer e.wg.Done()
-	iamClient, err := e.getIamClient(accountId)
-	// return errors
-	if err != nil {
-		e.Logger.Errorf("error retrieving iam client for account [%v] : %v", accountId, err)
-		complianceEvaluation := pgtypes.ComplianceEvaluation{
-			AccountId:    accountId,
-			ResourceType: AWS_IAM_ROLE,
-			Arn:          "",
-			Compliance:   configServiceTypes.ComplianceType(NOT_APPLICABLE),
-			ErrMsg:       err.Error(),
-			Timestamp:    time.Now(),
-			Annotation:   "",
-		}
-		processingErr := ProcessingError{
-			complianceEvaluation: complianceEvaluation,
-			result:               resultChan,
-			message:              err.Error(),
-		}
-		handleError(processingErr)
-		return
-	}
-	accessAnalyzerClient, err := e.getAccessAnalyzerClient(accountId)
-	// return errors
-	if err != nil {
-		e.Logger.Errorf("error retrieving access analyzer client for account [%v] : %v", accountId, err)
-		complianceEvaluation := pgtypes.ComplianceEvaluation{
-			AccountId:    accountId,
-			ResourceType: AWS_IAM_ROLE,
-			Arn:          "",
-			Compliance:   configServiceTypes.ComplianceType(NOT_APPLICABLE),
-			ErrMsg:       err.Error(),
-			Timestamp:    time.Now(),
-			Annotation:   "",
-		}
-		processingErr := ProcessingError{
-			complianceEvaluation: complianceEvaluation,
-			result:               resultChan,
-			message:              err.Error(),
-		}
-		handleError(processingErr)
-		return
-	}
+	iamClient := e.GetAwsIamClient(accountId)
+	accessAnalyzerClient := e.GetAwsAccessAnalyzerClient(accountId)
 	// list all policies for roles
 	listRolePaginator := iam.NewListRolesPaginator(iamClient, &iam.ListRolesInput{})
 	for listRolePaginator.HasMorePages() {
@@ -342,21 +354,22 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultChan chan
 		// check for errors
 		if err != nil {
 			e.Logger.Errorf("error retrieving list of roles : %v", err)
-			complianceEvaluation := pgtypes.ComplianceEvaluation{
+			complianceEvaluation := evaltypes.ComplianceEvaluation{
 				AccountId:    accountId,
-				ResourceType: AWS_IAM_ROLE,
+				ResourceType: evaltypes.NOT_SPECIFIED,
 				Arn:          "",
-				Compliance:   configServiceTypes.ComplianceType(NOT_APPLICABLE),
+				Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
 				ErrMsg:       err.Error(),
 				Timestamp:    time.Now(),
 				Annotation:   "",
 			}
 			processingErr := ProcessingError{
-				complianceEvaluation: complianceEvaluation,
-				result:               resultChan,
-				message:              err.Error(),
+				Wg:                   e.wg,
+				ComplianceEvaluation: complianceEvaluation,
+				Result:               resultsBuffer,
+				Message:              err.Error(),
 			}
-			handleError(processingErr)
+			HandleError(processingErr)
 			return
 		}
 		for _, role := range listRolePage.Roles {
@@ -370,21 +383,22 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultChan chan
 				// check for errors
 				if err != nil {
 					e.Logger.Errorf("error retrieving list of policies for role [%v] : %v", *role.RoleName, err)
-					complianceEvaluation := pgtypes.ComplianceEvaluation{
+					complianceEvaluation := evaltypes.ComplianceEvaluation{
 						AccountId:    accountId,
-						ResourceType: AWS_IAM_ROLE,
+						ResourceType: evaltypes.AWS_IAM_ROLE,
 						Arn:          *role.Arn,
-						Compliance:   configServiceTypes.ComplianceType(NOT_APPLICABLE),
+						Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
 						ErrMsg:       err.Error(),
 						Timestamp:    time.Now(),
 						Annotation:   "",
 					}
 					processingErr := ProcessingError{
-						complianceEvaluation: complianceEvaluation,
-						result:               resultChan,
-						message:              err.Error(),
+						Wg:                   e.wg,
+						ComplianceEvaluation: complianceEvaluation,
+						Result:               resultsBuffer,
+						Message:              err.Error(),
 					}
-					handleError(processingErr)
+					HandleError(processingErr)
 					return
 				}
 				// loop through policy documents and check for compliance
@@ -398,21 +412,22 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultChan chan
 					// check for errors
 					if err != nil {
 						e.Logger.Errorf("error retrieving policy document for policy [%v] : %v", policyName, err)
-						complianceEvaluation := pgtypes.ComplianceEvaluation{
+						complianceEvaluation := evaltypes.ComplianceEvaluation{
 							AccountId:    accountId,
-							ResourceType: AWS_IAM_ROLE,
+							ResourceType: evaltypes.AWS_IAM_ROLE,
 							Arn:          *role.Arn,
-							Compliance:   configServiceTypes.ComplianceType(NOT_APPLICABLE),
+							Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
 							ErrMsg:       err.Error(),
 							Timestamp:    time.Now(),
 							Annotation:   "",
 						}
 						processingErr := ProcessingError{
-							complianceEvaluation: complianceEvaluation,
-							result:               resultChan,
-							message:              err.Error(),
+							Wg:                   e.wg,
+							ComplianceEvaluation: complianceEvaluation,
+							Result:               resultsBuffer,
+							Message:              err.Error(),
 						}
-						handleError(processingErr)
+						HandleError(processingErr)
 						return
 					}
 					policyDocument := *getPolicyDocumentOutput.PolicyDocument
@@ -421,22 +436,25 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultChan chan
 					// check for errors
 					if err != nil {
 						e.Logger.Errorf("error checking compliance for policy [%v] : %v", policyName, err)
-						complianceEvaluation := pgtypes.ComplianceEvaluation{
-							AccountId:    "",
-							ResourceType: AWS_IAM_ROLE,
+						complianceEvaluation := evaltypes.ComplianceEvaluation{
+							AccountId:    accountId,
+							ResourceType: evaltypes.AWS_IAM_ROLE,
 							Arn:          *role.Arn,
 							ErrMsg:       err.Error(),
 							Timestamp:    time.Now(),
 							Annotation:   "",
 						}
 						processingErr := ProcessingError{
-							complianceEvaluation: complianceEvaluation,
-							result:               resultChan,
-							message:              err.Error(),
+							Wg:                   e.wg,
+							ComplianceEvaluation: complianceEvaluation,
+							Result:               resultsBuffer,
+							Message:              err.Error(),
 						}
-						handleError(processingErr)
+						HandleError(processingErr)
 					}
-					resultChan <- pgtypes.ComplianceEvaluation{
+					// send compliance result to results channel
+					e.wg.Add(1)
+					resultsBuffer <- evaltypes.ComplianceEvaluation{
 						AccountId:  accountId,
 						Arn:        *role.Arn,
 						Compliance: isCompliantResult.Compliance,
@@ -448,42 +466,10 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultChan chan
 }
 
 // process compliance for iam users
-func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultChan chan<- pgtypes.ComplianceEvaluation) {
+func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation) {
 	defer e.wg.Done()
-	iamClient, err := e.getIamClient(accountId)
-	// return errors
-	if err != nil {
-		e.Logger.Errorf("error retrieving iam client for account [%v] : %v", accountId, err)
-		complianceEvaluation := pgtypes.ComplianceEvaluation{
-			AccountId: accountId,
-			Arn:       "",
-			ErrMsg:    err.Error(),
-		}
-		processingErr := ProcessingError{
-			complianceEvaluation: complianceEvaluation,
-			result:               resultChan,
-			message:              err.Error(),
-		}
-		handleError(processingErr)
-		return
-	}
-	accessAnalyzerClient, err := e.getAccessAnalyzerClient(accountId)
-	// return errors
-	if err != nil {
-		e.Logger.Errorf("error retrieving access analyzer client for account [%v] : %v", accountId, err)
-		complianceEvaluation := pgtypes.ComplianceEvaluation{
-			AccountId: accountId,
-			Arn:       "",
-			ErrMsg:    err.Error(),
-		}
-		processingErr := ProcessingError{
-			complianceEvaluation: complianceEvaluation,
-			result:               resultChan,
-			message:              err.Error(),
-		}
-		handleError(processingErr)
-		return
-	}
+	iamClient := e.GetAwsIamClient(accountId)
+	accessAnalyzerClient := e.GetAwsAccessAnalyzerClient(accountId)
 	// list all policies for users
 	listUserPaginator := iam.NewListUsersPaginator(iamClient, &iam.ListUsersInput{})
 	for listUserPaginator.HasMorePages() {
@@ -491,17 +477,22 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultChan chan
 		// check for errors
 		if err != nil {
 			e.Logger.Errorf("error retrieving list of users : %v", err)
-			complianceEvaluation := pgtypes.ComplianceEvaluation{
-				AccountId: accountId,
-				Arn:       "",
-				ErrMsg:    err.Error(),
+			complianceEvaluation := evaltypes.ComplianceEvaluation{
+				AccountId:    accountId,
+				ResourceType: evaltypes.NOT_SPECIFIED,
+				Arn:          "",
+				Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
+				ErrMsg:       err.Error(),
+				Timestamp:    time.Now(),
+				Annotation:   "",
 			}
 			processingErr := ProcessingError{
-				complianceEvaluation: complianceEvaluation,
-				result:               resultChan,
-				message:              err.Error(),
+				Wg:                   e.wg,
+				ComplianceEvaluation: complianceEvaluation,
+				Result:               resultsBuffer,
+				Message:              err.Error(),
 			}
-			handleError(processingErr)
+			HandleError(processingErr)
 			return
 		}
 		for _, user := range listUserPage.Users {
@@ -515,17 +506,22 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultChan chan
 				// check for errors
 				if err != nil {
 					e.Logger.Errorf("error retrieving list of policies for user [%v] : %v", *user.UserName, err)
-					complianceEvaluation := pgtypes.ComplianceEvaluation{
-						AccountId: accountId,
-						Arn:       *user.Arn,
-						ErrMsg:    err.Error(),
+					complianceEvaluation := evaltypes.ComplianceEvaluation{
+						AccountId:    accountId,
+						ResourceType: evaltypes.AWS_IAM_USER,
+						Arn:          *user.Arn,
+						Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
+						ErrMsg:       err.Error(),
+						Timestamp:    time.Now(),
+						Annotation:   "",
 					}
 					processingErr := ProcessingError{
-						complianceEvaluation: complianceEvaluation,
-						result:               resultChan,
-						message:              err.Error(),
+						Wg:                   e.wg,
+						ComplianceEvaluation: complianceEvaluation,
+						Result:               resultsBuffer,
+						Message:              err.Error(),
 					}
-					handleError(processingErr)
+					HandleError(processingErr)
 					return
 				}
 				// loop through policy documents and check for compliance
@@ -539,17 +535,22 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultChan chan
 					// check for errors
 					if err != nil {
 						e.Logger.Errorf("error retrieving policy document for policy [%v] : %v", policyName, err)
-						complianceEvaluation := pgtypes.ComplianceEvaluation{
-							AccountId: accountId,
-							Arn:       *user.Arn,
-							ErrMsg:    err.Error(),
+						complianceEvaluation := evaltypes.ComplianceEvaluation{
+							AccountId:    accountId,
+							ResourceType: evaltypes.AWS_IAM_USER,
+							Arn:          *user.Arn,
+							Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
+							ErrMsg:       err.Error(),
+							Timestamp:    time.Now(),
+							Annotation:   "",
 						}
 						processingErr := ProcessingError{
-							complianceEvaluation: complianceEvaluation,
-							result:               resultChan,
-							message:              err.Error(),
+							Wg:                   e.wg,
+							ComplianceEvaluation: complianceEvaluation,
+							Result:               resultsBuffer,
+							Message:              err.Error(),
 						}
-						handleError(processingErr)
+						HandleError(processingErr)
 						return
 					}
 					policyDocument := *getPolicyDocumentOutput.PolicyDocument
@@ -558,19 +559,26 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultChan chan
 					// check for errors
 					if err != nil {
 						e.Logger.Errorf("error checking compliance for policy [%v] : %v", policyName, err)
-						complianceEvaluation := pgtypes.ComplianceEvaluation{
-							AccountId: "",
-							Arn:       *user.Arn,
-							ErrMsg:    err.Error(),
+						complianceEvaluation := evaltypes.ComplianceEvaluation{
+							AccountId:    "",
+							ResourceType: evaltypes.AWS_IAM_USER,
+							Arn:          *user.Arn,
+							Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
+							ErrMsg:       err.Error(),
+							Timestamp:    time.Now(),
+							Annotation:   "",
 						}
 						processingErr := ProcessingError{
-							complianceEvaluation: complianceEvaluation,
-							result:               resultChan,
-							message:              err.Error(),
+							Wg:                   e.wg,
+							ComplianceEvaluation: complianceEvaluation,
+							Result:               resultsBuffer,
+							Message:              err.Error(),
 						}
-						handleError(processingErr)
+						HandleError(processingErr)
 					}
-					resultChan <- pgtypes.ComplianceEvaluation{
+					// send compliance result to results channel
+					e.wg.Add(1)
+					resultsBuffer <- evaltypes.ComplianceEvaluation{
 						AccountId:  accountId,
 						Arn:        *user.Arn,
 						Compliance: isCompliantResult.Compliance,
@@ -582,16 +590,16 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultChan chan
 }
 
 // process compliance for iam users and iam roles
-func (e *_Evaluator) ProcessComplianceForAll(accountId string, resultChan chan<- pgtypes.ComplianceEvaluation) {
+func (e *_Evaluator) ProcessComplianceForAll(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation) {
 	defer e.wg.Done()
 	e.wg.Add(1)
-	go e.ProcessComplianceForUsers(accountId, resultChan)
+	go e.ProcessComplianceForUsers(accountId, resultsBuffer)
 	e.wg.Add(1)
-	go e.ProcessComplianceForRoles(accountId, resultChan)
+	go e.ProcessComplianceForRoles(accountId, resultsBuffer)
 }
 
 // check if policy document is compliant
-func (e *_Evaluator) IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (pgtypes.ComplianceResult, error) {
+func (e *_Evaluator) IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (evaltypes.ComplianceResult, error) {
 	input := accessanalyzer.CheckAccessNotGrantedInput{
 		Access: []accessAnalyzerTypes.Access{
 			{
@@ -606,20 +614,55 @@ func (e *_Evaluator) IsCompliant(client *accessanalyzer.Client, policyDocument s
 	// check for errors
 	if err != nil {
 		e.Logger.Errorf("error checking compliance for policy document : %v", err)
-		return pgtypes.ComplianceResult{}, err
+		return evaltypes.ComplianceResult{}, err
 	}
 	if output.Result == accessAnalyzerTypes.CheckAccessNotGrantedResultPass {
-		return pgtypes.ComplianceResult{
-			Compliance: configServiceTypes.ComplianceType(COMPLIANT),
+		return evaltypes.ComplianceResult{
+			Compliance: configServiceTypes.ComplianceTypeCompliant,
 			Reasons:    output.Reasons,
 			Message:    *output.Message,
 		}, nil
 	}
-	return pgtypes.ComplianceResult{
-		Compliance: configServiceTypes.ComplianceType(NON_COMPLIANT),
+	return evaltypes.ComplianceResult{
+		Compliance: configServiceTypes.ComplianceTypeNonCompliant,
 		Reasons:    output.Reasons,
 		Message:    *output.Message,
 	}, nil
+}
+
+// ###############################################################################################################
+// AWS CONFIG INTERFACE METHODS
+// ###############################################################################################################
+
+// send evaluation to AWS config
+func (e *_Evaluator) SendEvaluations(evaluations []configServiceTypes.Evaluation) {
+	e.Logger.Debugf("sending evaluations to AWS config")
+	// send evaluation to AWS config
+	resultToken := e.GetResultToken()
+	_, err := e.configClient.PutEvaluations(context.Background(), &configservice.PutEvaluationsInput{
+		ResultToken: aws.String(resultToken),
+		Evaluations: evaluations,
+		TestMode:    false,
+	})
+	// return errors
+	if err != nil {
+		e.Logger.Errorf("error sending evaluations to AWS config : %v", err)
+		evaluationErr := EvaluationError{
+			Message: err.Error(),
+		}
+		HandleError(evaluationErr)
+	}
+}
+
+// ###############################################################################################################
+// DATA VALIDATION INTERFACE METHODS
+// ###############################################################################################################
+
+// validate action from configuration file
+func (e *_Evaluator) IsValidAction(action string) bool {
+	// IAM action pattern: <service-namespace>:<action-name>
+	iamActionRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+:[a-zA-Z0-9_\*]+$`)
+	return iamActionRegex.MatchString(action)
 }
 
 // validate scope
@@ -631,54 +674,71 @@ func (e *_Evaluator) IsValidScope(scope string) bool {
 	return false
 }
 
-// send evaluation to AWS config
-func (e *_Evaluator) SendEvaluations(evaluations []configServiceTypes.Evaluation) error {
-	e.Logger.Debugf("sending evaluations to AWS config")
-	// send evaluation to AWS config
-	_, err := e.configClient.PutEvaluations(context.Background(), &configservice.PutEvaluationsInput{
-		ResultToken: &e.resultToken,
-		Evaluations: evaluations,
-		TestMode:    false,
-	})
-	// return errors
-	if err != nil {
-		e.Logger.Errorf("error sending evaluations to AWS config : %v", err)
-		evaluationErr := EvaluationError{
-			message: err.Error(),
-		}
-		handleError(evaluationErr)
-	}
-	return nil
+// ###############################################################################################################
+// GETTER & SETTER INTERFACE METHODS
+// ###############################################################################################################
+
+// get logger
+func (e *_Evaluator) GetLogger() logger.Logger {
+	return e.Logger
 }
 
-// validate action from configuration file
-func (e *_Evaluator) IsValidAction(action string) bool {
-	// IAM action pattern: <service-namespace>:<action-name>
-	iamActionRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+:[a-zA-Z0-9_\*]+$`)
-	return iamActionRegex.MatchString(action)
+// return AWS Config client
+func (e *_Evaluator) GetAwsConfigClient() *configservice.Client {
+	return e.configClient
 }
 
-// retrieve iam client by account id
-func (e *_Evaluator) getIamClient(accountId string) (*iam.Client, error) {
-	if client, ok := e.iamClientMap[accountId]; ok {
-		e.Logger.Debugf("retrieving iam client for account [%v]", accountId)
-		return client, nil
-	}
-	e.Logger.Errorf("no iam client found for account [%v]", accountId)
-	return nil, errors.New("no iam client found for account [" + accountId + "]")
+// set AWS Config client
+func (e *_Evaluator) SetAwsConfigClient(client *configservice.Client) {
+	e.configClient = client
 }
 
-// retrieve access analyzer client by account id
-func (e *_Evaluator) getAccessAnalyzerClient(accountId string) (*accessanalyzer.Client, error) {
-	if client, ok := e.accessAnalyzerClientMap[accountId]; ok {
-		e.Logger.Debugf("retrieving access analyzer client for account [%v]", accountId)
-		return client, nil
-	}
-	e.Logger.Errorf("no access analyzer client found for account [%v]", accountId)
-	return nil, errors.New("no access analyzer client found for account [" + accountId + "]")
+// return AWS IAM client
+func (e *_Evaluator) GetAwsIamClient(accountId string) *iam.Client {
+	return e.iamClientMap[accountId]
 }
 
-// get policyGeneral
-func GetPolicyGeneral() Evaluator {
-	return policyGeneral
+// set AWS IAM client
+func (e *_Evaluator) SetAwsIamClient(accountId string, client *iam.Client) {
+	e.iamClientMap[accountId] = client
+}
+
+// return AWS Access Analyzer client
+func (e *_Evaluator) GetAwsAccessAnalyzerClient(accountId string) *accessanalyzer.Client {
+	return e.accessAnalyzerClientMap[accountId]
+}
+
+// set AWS Access Analyzer client
+func (e *_Evaluator) SetAwsAccessAnalyzerClient(accountId string, client *accessanalyzer.Client) {
+	e.accessAnalyzerClientMap[accountId] = client
+}
+
+// return restricted actions
+func (e *_Evaluator) GetRestrictedActions() []string {
+	return e.restrictedActions
+}
+
+// append restricted action
+func (e *_Evaluator) AppendRestrictedAction(action string) {
+	e.restrictedActions = append(e.restrictedActions, action)
+}
+
+// set result token
+func (e *_Evaluator) SetResultToken(token string) {
+	e.resultToken = token
+}
+
+// get result token
+func (e *_Evaluator) GetResultToken() string {
+	return e.resultToken
+}
+
+// set scope
+func (e *_Evaluator) SetScope(scope string) {
+	e.scope = scope
+}
+
+// get scope
+func (e *_Evaluator) GetScope() string {
+	return e.scope
 }

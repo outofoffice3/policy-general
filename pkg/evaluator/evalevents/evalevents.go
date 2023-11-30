@@ -1,4 +1,4 @@
-package pgevents
+package evalevents
 
 type ConfigEvent struct {
 	Version          string `json:"version"`

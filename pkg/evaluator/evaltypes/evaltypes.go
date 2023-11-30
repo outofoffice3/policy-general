@@ -1,4 +1,4 @@
-package pgtypes
+package evaltypes
 
 import (
 	"time"
@@ -23,7 +23,7 @@ type AWSAccount struct {
 
 type ComplianceEvaluation struct {
 	AccountId    string               `json:"accountId"`
-	ResourceType string               `json:"resoucetype"`
+	ResourceType ResourceType         `json:"resoucetype"`
 	Arn          string               `json:"arn"`
 	Compliance   types.ComplianceType `json:"compliant"`
 	Annotation   string               `json:"annotation"`

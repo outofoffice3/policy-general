@@ -9,28 +9,30 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/outofoffice3/common/logger"
 	"github.com/outofoffice3/policy-general/pkg/evaluator"
-	"github.com/outofoffice3/policy-general/pkg/pgevents"
+	"github.com/outofoffice3/policy-general/pkg/evaluator/evalevents"
 )
 
 var (
-	sos                 logger.Logger
-	complianceEvalutaor evaluator.Evaluator
+	complianceEvaluator evaluator.Evaluator
 )
 
 func handler(ctx context.Context, event events.CloudWatchEvent) error {
+	// retrieve logger
+	sos := complianceEvaluator.GetLogger()
 	sos.Debugf("cloudwatch event [%+v]", event)
 	// Deserialize the event into ConfigEvent
-	var configEvent pgevents.ConfigEvent
+	var configEvent evalevents.ConfigEvent
 	if err := json.Unmarshal(event.Detail, &configEvent); err != nil {
 		return fmt.Errorf("failed to unmarshal Config event: %v", err)
 	}
 	sos.Debugf("config event [%+v]", configEvent)
-	err := complianceEvalutaor.HandleConfigEvent(configEvent)
 
+	// Handle config event & start service execution
+	err := complianceEvaluator.HandleConfigEvent(configEvent)
+	// return errors
 	if err != nil {
-		return fmt.Errorf("failed to handle Config event: %v", err)
+		evaluator.HandleError(err)
 	}
-
 	return nil
 }
 
@@ -39,6 +41,6 @@ func main() {
 }
 
 func init() {
-	sos = logger.NewConsoleLogger(logger.LogLevelDebug)
-	complianceEvalutaor = evaluator.NewEvaluator()
+	logger := logger.NewConsoleLogger(logger.LogLevelDebug)
+	complianceEvaluator = evaluator.Init(logger)
 }

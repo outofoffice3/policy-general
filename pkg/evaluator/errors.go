@@ -2,53 +2,61 @@ package evaluator
 
 import (
 	"log"
+	"sync"
 
-	"github.com/outofoffice3/policy-general/pkg/pgtypes"
+	"github.com/outofoffice3/policy-general/pkg/evaluator/evaltypes"
 )
 
+// errors that occur during initialization
 type InitError struct {
-	message string
+	Message string
 }
 
 func (e InitError) Error() string {
-	return e.message
+	return e.Message
 }
 
-type ExecutionError struct {
-	service AwsServiceName
-	message string
+// default error type.  Can occur anywhere in the program except the initialization phase
+type GeneralError struct {
+	Service AwsServiceName
+	Message string
 }
 
-func (e ExecutionError) Error() string {
-	return "[" + string(e.service) + "] : " + e.message
+func (e GeneralError) Error() string {
+	return "[" + string(e.Service) + "] : " + e.Message
 }
 
+// errors that occur during the execution of evaluation compliance.  These errors needs to be
+// handled carefully since they will occur in its own go routine.
 type ProcessingError struct {
-	complianceEvaluation pgtypes.ComplianceEvaluation
-	result               chan<- pgtypes.ComplianceEvaluation
-	message              string
+	Wg                   *sync.WaitGroup
+	ComplianceEvaluation evaltypes.ComplianceEvaluation
+	Result               chan<- evaltypes.ComplianceEvaluation
+	Message              string
 }
 
 func (e ProcessingError) Error() string {
-	return e.message
+	return e.Message
 }
 
+// errors that occur when trying to send evaluation to AWS Config.  These errors need to be handled
+// seperately to allow for unique handling of those failed requests
 type EvaluationError struct {
-	message string
+	Message string
 }
 
 func (e EvaluationError) Error() string {
-	return e.message
+	return e.Message
 }
 
 // error handler
-func handleError(err error) {
+func HandleError(err error) {
 	log.Printf("Error: [%v]", err)
 	switch err.(type) {
 	case InitError:
 		{
 		}
-	case ExecutionError:
+	case GeneralError:
 		{
 		}
 	case ProcessingError:
