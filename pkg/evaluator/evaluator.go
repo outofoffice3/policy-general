@@ -194,11 +194,14 @@ func Init(logger logger.Logger) {
 // create new evaluator
 func NewEvaluator() *_Evaluator {
 	return &_Evaluator{
-		wg:                &sync.WaitGroup{},
-		scope:             "",
-		iamClientMap:      make(map[string]*iam.Client),
-		Logger:            nil,
-		restrictedActions: nil,
+		wg:                      &sync.WaitGroup{},
+		scope:                   "",
+		resultToken:             "",
+		configClient:            nil,
+		iamClientMap:            make(map[string]*iam.Client),
+		accessAnalyzerClientMap: make(map[string]*accessanalyzer.Client),
+		Logger:                  nil,
+		restrictedActions:       nil,
 	}
 }
 
@@ -218,13 +221,11 @@ func (e *_Evaluator) HandleConfigEvent(event pgevents.ConfigEvent) []pgtypes.Com
 		e.Logger.Debugf("processing compliance check for account [%v]", accountId)
 	}
 
-	// close go routine channel when all compliance checks complete
-	finishSignal := make(chan pgtypes.FinishSignal)
-	go func(chan pgtypes.ComplianceEvaluation) {
-		<-finishSignal
+	go func(wg *sync.WaitGroup, resultChannel chan pgtypes.ComplianceEvaluation) {
+		wg.Wait() // wait for results to be processed
 		e.Logger.Debugf("closing results channel")
 		close(resultChan)
-	}(resultChan)
+	}(e.wg, resultChan)
 
 	// read results from results channel
 	var batchEvaluations []configServiceTypes.Evaluation
@@ -260,7 +261,6 @@ func (e *_Evaluator) HandleConfigEvent(event pgevents.ConfigEvent) []pgtypes.Com
 			continue
 		}
 	}
-	finishSignal <- pgtypes.FinishSignal{}
 	// send remaining results to aws config
 	err := e.SendEvaluations(batchEvaluations)
 	if err != nil {

@@ -27,11 +27,9 @@ Resources:
         Variables:
           CONFIG_FILE_BUCKET_NAME: policy-general-2023
           CONFIG_FILE : config.json
+      Role: arn:aws:iam::033197602013:role/policy-general-2023
 
 Outputs:
   AWSConfigRuleLambda:
     Description: First Lambda Function ARN
     Value: !GetAtt AWSConfigRuleLambda.Arn
-  HelloWorldFunctionIamRole:
-    Description: Implicit IAM Role created for Hello World function
-    Value: !GetAtt HelloWorldFunctionRole.Arn

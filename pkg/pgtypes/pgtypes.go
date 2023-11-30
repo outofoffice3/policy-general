@@ -44,5 +44,3 @@ type AWSConfigEvaluationInput struct {
 	OrderingTimestamp string `json:"orderingTimestamp"`
 	Annotation        string `json:"annotation"`
 }
-
-type FinishSignal struct{}

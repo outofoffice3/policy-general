@@ -108,7 +108,7 @@ type ConfigEvent struct {
 
 ## How to Deploy (step by step)
 
-- [Readme for CDK deployment](/deployment/README.md)
+- [Readme for Policy General deployment](/deployment/README.md)
 
 ## License 
 
