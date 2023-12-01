@@ -27,6 +27,17 @@ Policy General has two components:
 
 This solution enhances security and compliance by enforcing IAM policy restrictions across multiple AWS accounts. The integration with AWS Config facilitates continuous detection through scheduled rule runs, providing flexibility for customized checks on a weekly, daily, or hourly basis.
 
+### Project Structure 
+```bash 
+|-- deployment/           # deployment files
+  |-- cdk-config-rule/    # cdk app for deploying aws config rule
+  |-- sam-lambda/         # sam template for deploying lambda func        
+|-- pkg/                  # packages 
+  |-- evaluator/          # evaluator package
+    |-- evalevents/       # evaluator event types
+    |-- evaltypes/        # evaluator types
+```
+
 ## Prerequisites
 
 Before deploying this solution, ensure your local development environment is equipped with the following:
@@ -35,10 +46,10 @@ Before deploying this solution, ensure your local development environment is equ
 Download and install Go from the [official website](https://go.dev/dl/).
 
 - **AWS SAM CLI**:
-Build, test, and deploy serverless applications using the AWS SAM CLI. Install it as per the [AWS SAM CLI Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
+Install AWS SAM CLI by following the [AWS SAM CLI Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
 
 - **AWS CDK**:
-Deploy infrastructure as code with the AWS Cloud Development Kit. [Install the AWS CDK](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install) following the guidance in the AWS CDK Getting Started Guide.
+Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install).
 
 Ensure these prerequisites are correctly configured for a smooth deployment. Refer to each tool's documentation for the latest installation instructions.
 
