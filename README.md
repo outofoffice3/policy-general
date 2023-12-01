@@ -21,40 +21,15 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
 
 ## Overview
 
-Policy General has two components: 
-
-1. Custom AWS Config Rule 
-2. Lambda Function integrated with the custom rule
-
 This solution enhances security and compliance by enforcing IAM policy restrictions across multiple AWS accounts. The integration with AWS Config facilitates continuous detection through scheduled rule runs, providing flexibility for customized checks on a weekly, daily, or hourly basis.
 
-### Project Structure 
-```bash 
-|-- deployment/           # deployment files
-  |-- cdk-config-rule/    # cdk app for deploying aws config rule
-  |-- sam-lambda/         # sam template for deploying lambda func        
-|-- pkg/                  # packages 
-  |-- evaluator/          # evaluator package
-    |-- evalevents/       # evaluator event types
-    |-- evaltypes/        # evaluator types
-```
+Policy General consists of the following components: 
 
-## Prerequisites
+1. Custom AWS config rule 
+2. Lambda funciton integrated with custom AWS config rule
+3. Execution role for lambda function
 
-Before deploying this solution, ensure your local development environment is equipped with the following:
-
-- **Go Programming Language (v1.20+)**:
-Download and install Go from the [official website](https://go.dev/dl/).
-
-- **AWS SAM CLI**:
-Install AWS SAM CLI by following the [AWS SAM CLI Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
-
-- **AWS CDK**:
-Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install).
-
-### IAM Role Requirements
-
-1. Execution role for Lambda Function used with AWS Config rule.  Below are the minimum permissions required: 
+Below are the permissions used for the execution role: 
 
 - logs:CreateLogGroup
 - logs:CreateLogStream
@@ -126,7 +101,33 @@ Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aw
 }
 ```
 
-2. IAM roles for each accountId specified in the `config.json` file.  They will require the minimum permissions: 
+### Project Structure 
+```bash 
+|-- deployment/           # deployment files
+  |-- cdk-config-rule/    # cdk app for deploying aws config rule
+  |-- sam-lambda/         # sam template for deploying lambda func        
+|-- pkg/                  # packages 
+  |-- evaluator/          # evaluator package
+    |-- evalevents/       # evaluator event types
+    |-- evaltypes/        # evaluator types
+```
+
+## Prerequisites
+
+Before deploying this solution, ensure your local development environment is equipped with the following:
+
+- **Go Programming Language (v1.20+)**:
+Download and install Go from the [official website](https://go.dev/dl/).
+
+- **AWS SAM CLI**:
+Install AWS SAM CLI by following the [AWS SAM CLI Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
+
+- **AWS CDK**:
+Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install).
+
+### IAM Role Requirements
+
+1. IAM roles for each accountId specified in the `config.json` file.  They will require the minimum permissions: 
 
 - iam:ListUsers
 - iam:ListRoles
