@@ -11,6 +11,7 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
 ## Table of Contents
 - [Overview](#overview)
   - [Project Structure](#project-structure)
+  - [Created Resources](#resources-created)
 - [Prerequisites](#prerequisites)
 - [How it works](#how-it-works)
   - [Configuration](#configuration)
@@ -23,13 +24,38 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
 
 This solution enhances security and compliance by enforcing IAM policy restrictions across multiple AWS accounts. The integration with AWS Config facilitates continuous detection through scheduled rule runs, providing flexibility for customized checks on a weekly, daily, or hourly basis.
 
+### Project Structure 
+```bash 
+|-- deployment/           # deployment files
+  |-- cdk-config-rule/    # cdk app for deploying aws config rule
+  |-- sam-lambda/         # sam template for deploying lambda func        
+|-- pkg/                  # packages 
+  |-- evaluator/          # evaluator package
+    |-- evalevents/       # evaluator event types
+    |-- evaltypes/        # evaluator types
+```
+
+### Resources Created 
+
 Policy General consists of the following components: 
 
-1. Custom AWS config rule 
-2. Lambda funciton integrated with custom AWS config rule
+1. Custom AWS config rule that run on a periodic schedule
+2. Lambda function integrated with custom AWS config rule
 3. Execution role for lambda function
+4. S3 Bucket used for config file location & post execution log
 
-Below are the permissions used for the execution role: 
+```
+ARN's for created resources 
+
+CONFIG_ACCOUNT_ID = The account containing the config rule & lambda function
+MEMBER_ACCOUNT_ID = The accounts you specify in the `config.json` file 
+
+Lambda Execution Role : arn:aws:iam::*CONFIG_ACCOUNT_ID*:role/policy-general-lambda
+
+S3 Bucket ARN : arn:aws:s3:::your-bucket-name
+
+```
+Below are the permissions used for the lambda function execution role: 
 
 - logs:CreateLogGroup
 - logs:CreateLogStream
@@ -101,17 +127,6 @@ Below are the permissions used for the execution role:
 }
 ```
 
-### Project Structure 
-```bash 
-|-- deployment/           # deployment files
-  |-- cdk-config-rule/    # cdk app for deploying aws config rule
-  |-- sam-lambda/         # sam template for deploying lambda func        
-|-- pkg/                  # packages 
-  |-- evaluator/          # evaluator package
-    |-- evalevents/       # evaluator event types
-    |-- evaltypes/        # evaluator types
-```
-
 ## Prerequisites
 
 Before deploying this solution, ensure your local development environment is equipped with the following:
@@ -127,7 +142,7 @@ Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aw
 
 ### IAM Role Requirements
 
-1. IAM roles for each accountId specified in the `config.json` file.  They will require the minimum permissions: 
+1. For each accountId specified in the `config.json` file, you will need to create an IAM role that the lambda function can assume. Each role will require the following minimum permissions: 
 
 - iam:ListUsers
 - iam:ListRoles
@@ -154,7 +169,7 @@ Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aw
   ]
 }
 ```
-The aws config rule lambda function needs to assume all of these roles.  Add a trust policy to each role that will allow the lambda function's execution role to assume it.  
+To allow the lambda function execution role to assume this role via `sts:AssumeRole` create a trust policy on each role.
 
 For example, your `config.json` file might look like this:
 
@@ -179,7 +194,11 @@ For example, your `config.json` file might look like this:
   "scope": "all" // valid values = roles, user or all
 }
 ```
-So in this example, you would need to ensure that the IAM role's specified above, `arn:aws:iam::123456789101:role/your-role-name` and `arn:aws:iam::098765432109:role/your-role-name` both have a trust policy allowing the lambda function's execution role to assume it.  For example, below is a sample trust policy : 
+In this example, you would need to ensure that the IAM role's:
+- `arn:aws:iam::123456789101:role/your-role-name`
+- `arn:aws:iam::098765432109:role/your-role-name`
+
+both have a trust policy allowing the lambda function's execution role to assume it.  Below is a sample trust policy : 
 
 ```json 
 {
@@ -189,7 +208,7 @@ So in this example, you would need to ensure that the IAM role's specified above
       "Sid" : "Trust between AWS Config Rule Lambda Execution Role",
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::AWS_CONFIG_RULE_LAMBDA_ACCOUNT_ID:role/AWS_CONFIG_RULE_LAMBDA_ROLE_NAME"
+        "AWS": "arn:aws:iam::*CONFIG_ACCOUNT_ID*:role/policy-general-lambda"
       },
       "Action": "sts:AssumeRole"
     }
