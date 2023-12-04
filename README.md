@@ -1,4 +1,4 @@
-**DISCLAIMER: UNDER DEVELOPMENT.  WILL BE READY FOR RELEASE AFTER RE:INVENT 2023**
+**DISCLAIMER: UNDER DEVELOPMENT.  WILL BE READY FOR RELEASE 12/8/2023**
 
 <div align="center">
  <img src="./graphics/generalshao.gif" alt="walk" width="250"/>
@@ -11,8 +11,14 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
 ## Table of Contents
 - [Overview](#overview)
   - [Project Structure](#project-structure)
-  - [Created Resources](#resources-created)
 - [Prerequisites](#prerequisites)
+  - [Resources Required by User](#resources-required-by-user)
+    - [IAM Role(s)](#iam-roles)
+    - [Trust Policy](#trust-policy)
+- [Resources Created](#resources-created)
+  - [Custom AWS Config Rule]()
+  - [Lambda Function]()
+  - [S3 Bucket]()
 - [How it works](#how-it-works)
   - [Configuration](#configuration)
   - [Initialization](#initialization)
@@ -22,8 +28,12 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
 
 ## Overview
 
-This solution enhances security and compliance by enforcing IAM policy restrictions across multiple AWS accounts. The integration with AWS Config facilitates continuous detection through scheduled rule runs, providing flexibility for customized checks on a weekly, daily, or hourly basis.
+This solution enhances security and compliance by enforcing IAM policy restrictions across multiple AWS accounts. The integration with AWS Config enables continuous detection through scheduled rule runs, providing flexibility for customized checks on a periodic schedule. 
 
+<div align="center">
+ <img src="./graphics/overview.png" alt="walk" width="600"/>
+</div> 
+  
 ### Project Structure 
 ```bash 
 |-- deployment/           # deployment files
@@ -35,7 +45,100 @@ This solution enhances security and compliance by enforcing IAM policy restricti
     |-- evaltypes/        # evaluator types
 ```
 
-### Resources Created 
+## Prerequisites
+
+Before deploying this solution, ensure your local development environment is equipped with the following:
+
+- **Go Programming Language (v1.20+)**:
+Download and install Go from the [official website](https://go.dev/dl/).
+
+- **AWS SAM CLI**:
+Install AWS SAM CLI by following the [AWS SAM CLI Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
+
+- **AWS CDK**:
+Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install).
+
+### Resources required by user
+
+### IAM Role(s)
+
+1. For each accountId specified in the `config.json` file, you will need to create an IAM role that the lambda function can assume. Each role will require the following minimum permissions: 
+
+- iam:ListUsers
+- iam:ListRoles
+- iam:ListAttachedUserPolicies
+- iam:ListAttachedRolePolicies
+- access-analyzer:CheckAccessNotGranted
+
+```json 
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IAM & Access Analyzer Actions",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListUsers",
+        "iam:ListRoles",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListAttachedRolePolicies",
+        "access-analyzer:CheckAccessNotGranted"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+To allow the lambda function execution role to assume this role via `sts:AssumeRole` create a trust policy on each role.
+
+For example, your `config.json` file might look like this:
+
+```json 
+{
+  "awsAccounts": [
+    {
+      "accountId": "123456789101",
+      "roleName": "arn:aws:iam::123456789101:role/your-role-name"
+    },
+    {
+      "accountId": "098765432109",
+      "roleName": "arn:aws:iam::098765432109:role/your-role-name"
+    }
+  ],
+  "actions": [
+    "s3:GetObject",
+    "s3:PutObject",
+    "ec2:DescribeInstances",
+    "lambda:InvokeFunction"
+  ],
+  "scope": "all" // valid values = roles, user or all
+}
+```
+
+### Trust Policy 
+
+In this example, you would need to ensure that the IAM role's:
+- `arn:aws:iam::123456789101:role/your-role-name`
+- `arn:aws:iam::098765432109:role/your-role-name`
+
+both have a trust policy allowing the lambda function's execution role to assume it.  Below is a sample trust policy : 
+
+```json 
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid" : "Trust between AWS Config Rule Lambda Execution Role",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::*CONFIG_ACCOUNT_ID*:role/policy-general-lambda"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+### Resources Created by Solution
 
 Policy General consists of the following components: 
 
@@ -45,14 +148,19 @@ Policy General consists of the following components:
 4. S3 Bucket used for config file location & post execution log
 
 ```
-ARN's for created resources 
+Legend 
 
-CONFIG_ACCOUNT_ID = The account containing the config rule & lambda function
-MEMBER_ACCOUNT_ID = The accounts you specify in the `config.json` file 
+###################
+Variables 
+###################
+1. CONFIG_ACCOUNT_ID = The account containing the config rule & lambda function
+2. MEMBER_ACCOUNT_ID = The accounts you specify in the `config.json` file 
 
-Lambda Execution Role : arn:aws:iam::*CONFIG_ACCOUNT_ID*:role/policy-general-lambda
-
-S3 Bucket ARN : arn:aws:s3:::your-bucket-name
+###################
+AWS Resource ARN's
+###################
+3. Lambda Execution Role : arn:aws:iam::*CONFIG_ACCOUNT_ID*:role/policy-general-lambda
+4. S3 Bucket ARN : arn:aws:s3:::your-bucket-name
 
 ```
 Below are the permissions used for the lambda function execution role: 
@@ -127,95 +235,6 @@ Below are the permissions used for the lambda function execution role:
 }
 ```
 
-## Prerequisites
-
-Before deploying this solution, ensure your local development environment is equipped with the following:
-
-- **Go Programming Language (v1.20+)**:
-Download and install Go from the [official website](https://go.dev/dl/).
-
-- **AWS SAM CLI**:
-Install AWS SAM CLI by following the [AWS SAM CLI Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
-
-- **AWS CDK**:
-Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install).
-
-### IAM Role Requirements
-
-1. For each accountId specified in the `config.json` file, you will need to create an IAM role that the lambda function can assume. Each role will require the following minimum permissions: 
-
-- iam:ListUsers
-- iam:ListRoles
-- iam:ListAttachedUserPolicies
-- iam:ListAttachedRolePolicies
-- access-analyzer:CheckAccessNotGranted
-
-```json 
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "IAM & Access Analyzer Actions",
-      "Effect": "Allow",
-      "Action": [
-        "iam:ListUsers",
-        "iam:ListRoles",
-        "iam:ListAttachedUserPolicies",
-        "iam:ListAttachedRolePolicies",
-        "access-analyzer:CheckAccessNotGranted"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-```
-To allow the lambda function execution role to assume this role via `sts:AssumeRole` create a trust policy on each role.
-
-For example, your `config.json` file might look like this:
-
-```json 
-{
-  "awsAccounts": [
-    {
-      "accountId": "123456789101",
-      "roleName": "arn:aws:iam::123456789101:role/your-role-name"
-    },
-    {
-      "accountId": "098765432109",
-      "roleName": "arn:aws:iam::098765432109:role/your-role-name"
-    }
-  ],
-  "actions": [
-    "s3:GetObject",
-    "s3:PutObject",
-    "ec2:DescribeInstances",
-    "lambda:InvokeFunction"
-  ],
-  "scope": "all" // valid values = roles, user or all
-}
-```
-In this example, you would need to ensure that the IAM role's:
-- `arn:aws:iam::123456789101:role/your-role-name`
-- `arn:aws:iam::098765432109:role/your-role-name`
-
-both have a trust policy allowing the lambda function's execution role to assume it.  Below is a sample trust policy : 
-
-```json 
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid" : "Trust between AWS Config Rule Lambda Execution Role",
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::*CONFIG_ACCOUNT_ID*:role/policy-general-lambda"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-
-```
 
 ## How it works
 
