@@ -143,10 +143,10 @@ both have a trust policy allowing the lambda function's execution role to assume
 
 Deploying the Policy General solution creates the following components: 
 
-1. Custom AWS config rule
-2. Lambda function integrated with custom AWS config rule
-3. Execution role for lambda function
-4. S3 Bucket
+1. [Custom AWS config rule](#custom-config-rule)
+2. [Lambda function](#lambda-function)
+3. [Execution role for lambda function](#lambda-execution-role)
+4. [S3 Bucket](#s3-bucket)
 
 Please read each section below for more information about each created resource. 
 
