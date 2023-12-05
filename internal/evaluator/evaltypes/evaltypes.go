@@ -22,13 +22,24 @@ type AWSAccount struct {
 }
 
 type ComplianceEvaluation struct {
-	AccountId    string               `json:"accountId"`
-	ResourceType ResourceType         `json:"resoucetype"`
+	AccountId        string           `json:"accountId"`
+	ResourceType     ResourceType     `json:"resoucetype"`
+	Arn              string           `json:"arn"`
+	ComplianceResult ComplianceResult `json:"complianceResult"`
+	Annotation       string           `json:"annotation"`
+	ErrMsg           string           `json:"errMsg"`
+	Timestamp        time.Time        `json:"timestamp"`
+}
+
+type ExecutionLogEntry struct {
+	Timestamp    string               `json:"timestamp"`
+	Compliance   types.ComplianceType `json:"compliance"`
 	Arn          string               `json:"arn"`
-	Compliance   types.ComplianceType `json:"compliant"`
-	Annotation   string               `json:"annotation"`
+	ResourceType ResourceType         `json:"resourceType"`
+	Reasons      string               `json:"reasons"`
+	Message      string               `json:"message"`
 	ErrMsg       string               `json:"errMsg"`
-	Timestamp    time.Time            `json:"timestamp"`
+	AccountId    string               `json:"accountId"`
 }
 
 type ComplianceResult struct {

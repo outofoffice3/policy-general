@@ -21,8 +21,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/outofoffice3/common/logger"
-	"github.com/outofoffice3/policy-general/pkg/evaluator/evalevents"
-	"github.com/outofoffice3/policy-general/pkg/evaluator/evaltypes"
+	"github.com/outofoffice3/policy-general/internal/evaluator/evalevents"
+	"github.com/outofoffice3/policy-general/internal/evaluator/evaltypes"
 )
 
 /*
@@ -64,6 +64,13 @@ type Evaluator interface {
 	IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (evaltypes.ComplianceResult, error)
 	// send evaluation response to AWS config
 	SendEvaluations(evaluations []configServiceTypes.Evaluation)
+
+	// ###############################################################################################################
+	// MANAGING WAIT GROUP
+	// ###############################################################################################################
+
+	// increment wait group counter
+	IncrementWaitGroup()
 
 	// ###############################################################################################################
 	// GETTER & SETTER METHODS
@@ -173,7 +180,7 @@ func Init(log logger.Logger) Evaluator {
 		initErr := InitError{
 			Message: err.Error(),
 		}
-		HandleError(initErr)
+		HandleError(initErr, nil)
 	}
 
 	// retrieve config file from s3
@@ -187,7 +194,7 @@ func Init(log logger.Logger) Evaluator {
 		initErr := InitError{
 			Message: err.Error(),
 		}
-		HandleError(initErr)
+		HandleError(initErr, nil)
 	}
 
 	// read file contents and serialize to evaltypes.Config struct
@@ -198,7 +205,7 @@ func Init(log logger.Logger) Evaluator {
 		initErr := InitError{
 			Message: err.Error(),
 		}
-		HandleError(initErr)
+		HandleError(initErr, nil)
 	}
 	err = json.Unmarshal(objectContent, &policyGeneralConfig)
 	// return errors
@@ -206,7 +213,7 @@ func Init(log logger.Logger) Evaluator {
 		initErr := InitError{
 			Message: err.Error(),
 		}
-		HandleError(initErr)
+		HandleError(initErr, nil)
 	}
 
 	// validate scope from config file
@@ -214,7 +221,7 @@ func Init(log logger.Logger) Evaluator {
 		sos.Errorf("invalid scope [%v] in config file", policyGeneralConfig.Scope)
 		HandleError(InitError{
 			Message: "invalid scope value in config file",
-		})
+		}, nil)
 	}
 	complianceEvaluator.SetScope(policyGeneralConfig.Scope)
 
@@ -242,7 +249,7 @@ func Init(log logger.Logger) Evaluator {
 			sos.Errorf("invalid action [%v] in config file", action)
 			HandleError(InitError{
 				Message: "invalid restriced action in config file",
-			})
+			}, nil)
 		}
 		// add action to policy general
 		complianceEvaluator.AppendRestrictedAction(action)
@@ -295,14 +302,12 @@ func (e *_Evaluator) HandleConfigEvent(event evalevents.ConfigEvent) error {
 	maxBatchSize := 100
 	currentIndex := 0
 	for result := range resultsBuffer {
+		e.wg.Done() // decrement wait group counter when reading result from channel
 		e.Logger.Debugf("result received : %v", result)
-		if result.ErrMsg != "" {
-			e.Logger.Errorf("error processing compliance check for account [%v] : %v", result.AccountId, result.ErrMsg)
-		}
 		evaulation := configServiceTypes.Evaluation{
 			ComplianceResourceType: aws.String(string(result.ResourceType)),
 			ComplianceResourceId:   aws.String(result.Arn),
-			ComplianceType:         result.Compliance,
+			ComplianceType:         result.ComplianceResult.Compliance,
 			Annotation:             aws.String(result.Annotation),
 			OrderingTimestamp:      &result.Timestamp,
 		}
@@ -358,18 +363,21 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 				AccountId:    accountId,
 				ResourceType: evaltypes.NOT_SPECIFIED,
 				Arn:          "",
-				Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
-				ErrMsg:       err.Error(),
-				Timestamp:    time.Now(),
-				Annotation:   "",
+				ComplianceResult: evaltypes.ComplianceResult{
+					Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+					Reasons:    nil,
+					Message:    "",
+				},
+				ErrMsg:     err.Error(),
+				Timestamp:  time.Now(),
+				Annotation: "",
 			}
 			processingErr := ProcessingError{
-				Wg:                   e.wg,
 				ComplianceEvaluation: complianceEvaluation,
 				Result:               resultsBuffer,
 				Message:              err.Error(),
 			}
-			HandleError(processingErr)
+			HandleError(processingErr, e)
 			return
 		}
 		for _, role := range listRolePage.Roles {
@@ -387,18 +395,21 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 						AccountId:    accountId,
 						ResourceType: evaltypes.AWS_IAM_ROLE,
 						Arn:          *role.Arn,
-						Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
-						ErrMsg:       err.Error(),
-						Timestamp:    time.Now(),
-						Annotation:   "",
+						ComplianceResult: evaltypes.ComplianceResult{
+							Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+							Reasons:    nil,
+							Message:    "",
+						},
+						ErrMsg:     err.Error(),
+						Timestamp:  time.Now(),
+						Annotation: "",
 					}
 					processingErr := ProcessingError{
-						Wg:                   e.wg,
 						ComplianceEvaluation: complianceEvaluation,
 						Result:               resultsBuffer,
 						Message:              err.Error(),
 					}
-					HandleError(processingErr)
+					HandleError(processingErr, e)
 					return
 				}
 				// loop through policy documents and check for compliance
@@ -416,18 +427,21 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 							AccountId:    accountId,
 							ResourceType: evaltypes.AWS_IAM_ROLE,
 							Arn:          *role.Arn,
-							Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
-							ErrMsg:       err.Error(),
-							Timestamp:    time.Now(),
-							Annotation:   "",
+							ComplianceResult: evaltypes.ComplianceResult{
+								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+								Reasons:    nil,
+								Message:    "",
+							},
+							ErrMsg:     err.Error(),
+							Timestamp:  time.Now(),
+							Annotation: "",
 						}
 						processingErr := ProcessingError{
-							Wg:                   e.wg,
 							ComplianceEvaluation: complianceEvaluation,
 							Result:               resultsBuffer,
 							Message:              err.Error(),
 						}
-						HandleError(processingErr)
+						HandleError(processingErr, e)
 						return
 					}
 					policyDocument := *getPolicyDocumentOutput.PolicyDocument
@@ -440,24 +454,28 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 							AccountId:    accountId,
 							ResourceType: evaltypes.AWS_IAM_ROLE,
 							Arn:          *role.Arn,
-							ErrMsg:       err.Error(),
-							Timestamp:    time.Now(),
-							Annotation:   "",
+							ComplianceResult: evaltypes.ComplianceResult{
+								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+								Reasons:    nil,
+								Message:    "",
+							},
+							ErrMsg:     err.Error(),
+							Timestamp:  time.Now(),
+							Annotation: "",
 						}
 						processingErr := ProcessingError{
-							Wg:                   e.wg,
 							ComplianceEvaluation: complianceEvaluation,
 							Result:               resultsBuffer,
 							Message:              err.Error(),
 						}
-						HandleError(processingErr)
+						HandleError(processingErr, e)
 					}
 					// send compliance result to results channel
 					e.wg.Add(1)
 					resultsBuffer <- evaltypes.ComplianceEvaluation{
-						AccountId:  accountId,
-						Arn:        *role.Arn,
-						Compliance: isCompliantResult.Compliance,
+						AccountId:        accountId,
+						Arn:              *role.Arn,
+						ComplianceResult: isCompliantResult,
 					}
 				}
 			}
@@ -481,18 +499,21 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 				AccountId:    accountId,
 				ResourceType: evaltypes.NOT_SPECIFIED,
 				Arn:          "",
-				Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
-				ErrMsg:       err.Error(),
-				Timestamp:    time.Now(),
-				Annotation:   "",
+				ComplianceResult: evaltypes.ComplianceResult{
+					Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+					Reasons:    nil,
+					Message:    "",
+				},
+				ErrMsg:     err.Error(),
+				Timestamp:  time.Now(),
+				Annotation: "",
 			}
 			processingErr := ProcessingError{
-				Wg:                   e.wg,
 				ComplianceEvaluation: complianceEvaluation,
 				Result:               resultsBuffer,
 				Message:              err.Error(),
 			}
-			HandleError(processingErr)
+			HandleError(processingErr, e)
 			return
 		}
 		for _, user := range listUserPage.Users {
@@ -510,18 +531,21 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 						AccountId:    accountId,
 						ResourceType: evaltypes.AWS_IAM_USER,
 						Arn:          *user.Arn,
-						Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
-						ErrMsg:       err.Error(),
-						Timestamp:    time.Now(),
-						Annotation:   "",
+						ComplianceResult: evaltypes.ComplianceResult{
+							Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+							Reasons:    nil,
+							Message:    "",
+						},
+						ErrMsg:     err.Error(),
+						Timestamp:  time.Now(),
+						Annotation: "",
 					}
 					processingErr := ProcessingError{
-						Wg:                   e.wg,
 						ComplianceEvaluation: complianceEvaluation,
 						Result:               resultsBuffer,
 						Message:              err.Error(),
 					}
-					HandleError(processingErr)
+					HandleError(processingErr, e)
 					return
 				}
 				// loop through policy documents and check for compliance
@@ -539,18 +563,21 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 							AccountId:    accountId,
 							ResourceType: evaltypes.AWS_IAM_USER,
 							Arn:          *user.Arn,
-							Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
-							ErrMsg:       err.Error(),
-							Timestamp:    time.Now(),
-							Annotation:   "",
+							ComplianceResult: evaltypes.ComplianceResult{
+								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+								Reasons:    nil,
+								Message:    "",
+							},
+							ErrMsg:     err.Error(),
+							Timestamp:  time.Now(),
+							Annotation: "",
 						}
 						processingErr := ProcessingError{
-							Wg:                   e.wg,
 							ComplianceEvaluation: complianceEvaluation,
 							Result:               resultsBuffer,
 							Message:              err.Error(),
 						}
-						HandleError(processingErr)
+						HandleError(processingErr, e)
 						return
 					}
 					policyDocument := *getPolicyDocumentOutput.PolicyDocument
@@ -563,25 +590,28 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 							AccountId:    "",
 							ResourceType: evaltypes.AWS_IAM_USER,
 							Arn:          *user.Arn,
-							Compliance:   configServiceTypes.ComplianceTypeInsufficientData,
-							ErrMsg:       err.Error(),
-							Timestamp:    time.Now(),
-							Annotation:   "",
+							ComplianceResult: evaltypes.ComplianceResult{
+								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+								Reasons:    nil,
+								Message:    "",
+							},
+							ErrMsg:     err.Error(),
+							Timestamp:  time.Now(),
+							Annotation: "",
 						}
 						processingErr := ProcessingError{
-							Wg:                   e.wg,
 							ComplianceEvaluation: complianceEvaluation,
 							Result:               resultsBuffer,
 							Message:              err.Error(),
 						}
-						HandleError(processingErr)
+						HandleError(processingErr, e)
 					}
 					// send compliance result to results channel
 					e.wg.Add(1)
 					resultsBuffer <- evaltypes.ComplianceEvaluation{
-						AccountId:  accountId,
-						Arn:        *user.Arn,
-						Compliance: isCompliantResult.Compliance,
+						AccountId:        accountId,
+						Arn:              *user.Arn,
+						ComplianceResult: isCompliantResult,
 					}
 				}
 			}
@@ -650,7 +680,7 @@ func (e *_Evaluator) SendEvaluations(evaluations []configServiceTypes.Evaluation
 		evaluationErr := EvaluationError{
 			Message: err.Error(),
 		}
-		HandleError(evaluationErr)
+		HandleError(evaluationErr, e)
 	}
 }
 
@@ -672,6 +702,15 @@ func (e *_Evaluator) IsValidScope(scope string) bool {
 	}
 	e.Logger.Errorf("invalid scope [%v]", scope)
 	return false
+}
+
+// ###############################################################################################################
+// MANAGING WAIT GROUP
+// ###############################################################################################################
+
+// increment wait group
+func (e *_Evaluator) IncrementWaitGroup() {
+	e.wg.Add(1)
 }
 
 // ###############################################################################################################

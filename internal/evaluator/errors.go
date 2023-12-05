@@ -2,9 +2,8 @@ package evaluator
 
 import (
 	"log"
-	"sync"
 
-	"github.com/outofoffice3/policy-general/pkg/evaluator/evaltypes"
+	"github.com/outofoffice3/policy-general/internal/evaluator/evaltypes"
 )
 
 // errors that occur during initialization
@@ -23,13 +22,15 @@ type GeneralError struct {
 }
 
 func (e GeneralError) Error() string {
-	return "[" + string(e.Service) + "] : " + e.Message
+	if e.Service != "" {
+		return "[" + string(e.Service) + "] : " + e.Message
+	}
+	return e.Message
 }
 
 // errors that occur during the execution of evaluation compliance.  These errors needs to be
 // handled carefully since they will occur in its own go routine.
 type ProcessingError struct {
-	Wg                   *sync.WaitGroup
 	ComplianceEvaluation evaltypes.ComplianceEvaluation
 	Result               chan<- evaltypes.ComplianceEvaluation
 	Message              string
@@ -50,21 +51,33 @@ func (e EvaluationError) Error() string {
 }
 
 // error handler
-func HandleError(err error) {
+func HandleError(err error, evaluator Evaluator) {
 	log.Printf("Error: [%v]", err)
-	switch err.(type) {
+	switch switchErr := err.(type) {
 	case InitError:
 		{
+			// panic and exit applicaiton
+			log.Printf("Error type: [%T]\n", switchErr)
+			panic(err.Error())
 		}
 	case GeneralError:
 		{
+			log.Printf("Error type: [%T]\n", switchErr)
+			log.Println(err.Error())
 		}
 	case ProcessingError:
 		{
+			log.Println(err.Error())
+			resultChannel := err.(ProcessingError).Result
+			complianceEvaluation := err.(ProcessingError).ComplianceEvaluation
+
+			evaluator.IncrementWaitGroup()        // increment wait group
+			resultChannel <- complianceEvaluation // send evaluation to results buffer channel
 		}
 	default:
 		{
-			log.Printf("Unknown error: [%v]", err)
+			log.Printf("Unknown error: [%v]\n", err)
+			log.Printf("Error type: [%T]\n", switchErr)
 		}
 	}
 }

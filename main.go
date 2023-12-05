@@ -8,8 +8,8 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/outofoffice3/common/logger"
-	"github.com/outofoffice3/policy-general/pkg/evaluator"
-	"github.com/outofoffice3/policy-general/pkg/evaluator/evalevents"
+	"github.com/outofoffice3/policy-general/internal/evaluator"
+	"github.com/outofoffice3/policy-general/internal/evaluator/evalevents"
 )
 
 var (
@@ -31,7 +31,7 @@ func handler(ctx context.Context, event events.CloudWatchEvent) error {
 	err := complianceEvaluator.HandleConfigEvent(configEvent)
 	// return errors
 	if err != nil {
-		evaluator.HandleError(err)
+		evaluator.HandleError(err, nil)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-**DISCLAIMER: UNDER DEVELOPMENT.  WILL BE READY FOR RELEASE 12/8/2023**
+**DISCLAIMER: CURRENTLY PERFORMING INTEGRATION TESTING.  WILL BE READY FOR RELEASE 12/8/2023**
 
 <div align="center">
  <img src="./graphics/generalshao.gif" alt="walk" width="250"/>
