@@ -15,7 +15,7 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
   - [Resources Required by User](#resources-required-by-user)
     - [IAM Role(s)](#iam-roles)
     - [Trust Policy](#trust-policy)
-- [Resources Created](#resources-created)
+- [Resources Created](#resources-created-by-solution)
   - [Custom AWS Config Rule](#custom-config-rule)
   - [Lambda Function](#lambda-function)
   - [Lambda Exeuction Role](#lambda-execution-role)
