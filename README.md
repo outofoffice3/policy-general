@@ -60,7 +60,7 @@ Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aw
 
 ### Resources required by user
 
-### IAM Role(s)
+#### IAM Role(s)
 
 1. For each accountId specified in the `config.json` file, you will need to create an IAM role that the lambda function can assume. Each role will require the following minimum permissions: 
 
@@ -115,7 +115,7 @@ For example, your `config.json` file might look like this:
 }
 ```
 
-### Trust Policy 
+#### Trust Policy 
 
 In this example, you would need to ensure that the IAM role's:
 - `arn:aws:iam::123456789101:role/your-role-name`
@@ -140,29 +140,32 @@ both have a trust policy allowing the lambda function's execution role to assume
 ```
 ### Resources Created by Solution
 
-Policy General consists of the following components: 
+Deploying the Policy General solution creates the following components: 
 
-1. Custom AWS config rule that run on a periodic schedule
+1. Custom AWS config rule
 2. Lambda function integrated with custom AWS config rule
 3. Execution role for lambda function
-4. S3 Bucket used for config file location & post execution log
+4. S3 Bucket
 
-```
-Legend 
+Please read each section below for more information about each created resource. 
 
-###################
-Variables 
-###################
-1. CONFIG_ACCOUNT_ID = The account containing the config rule & lambda function
-2. MEMBER_ACCOUNT_ID = The accounts you specify in the `config.json` file 
+#### Custom Config Rule 
 
-###################
-AWS Resource ARN's
-###################
-3. Lambda Execution Role : arn:aws:iam::*CONFIG_ACCOUNT_ID*:role/policy-general-lambda
-4. S3 Bucket ARN : arn:aws:s3:::your-bucket-name
+- **Purpose** : check IAM identity policy compliance on an ongoing basis. 
+- **Name** : checkNoAccess-2023
+- **Type** : Periodic 
+- **Interval** : Daily 
+- **Lambda Function** : see section [Lambda Function](#lambda-function)
 
-```
+#### Lambda Function 
+
+- **Purpose** - runs when config rule is invoked
+- **Function Name** - checkNoAccess-aws-config-2023
+- **Memory Confiuration** - 256MB
+- **Execution Role** - see section [Lambda Execution Role](#lambda-execution-role)
+
+#### Lambda Execution Role
+
 Below are the permissions used for the lambda function execution role: 
 
 - logs:CreateLogGroup
@@ -234,7 +237,10 @@ Below are the permissions used for the lambda function execution role:
   ]
 }
 ```
-
+#### S3 Bucket
+- **Purpose** - where config file & execution log results will be stored
+- **BucketName** - 
+- **Region**  - 
 
 ## How it works
 
