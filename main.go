@@ -27,12 +27,8 @@ func handler(ctx context.Context, event events.CloudWatchEvent) error {
 	}
 	sos.Debugf("config event [%+v]", configEvent)
 
-	// Handle config event & start service execution
-	err := complianceEvaluator.HandleConfigEvent(configEvent)
-	// return errors
-	if err != nil {
-		return err
-	}
+	complianceEvaluator.HandleConfigEvent(configEvent) // Handle config event & start service execution
+	complianceEvaluator.Wait()                         // wait for execution to complete
 	return nil
 }
 

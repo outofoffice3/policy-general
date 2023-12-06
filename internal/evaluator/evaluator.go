@@ -39,7 +39,7 @@ Evaluator interface is responsible for the following :
 
 type Evaluator interface {
 	// entry point for evaluator interface.  Handles serialized config event from cloudwatch
-	HandleConfigEvent(event evalevents.ConfigEvent) error
+	HandleConfigEvent(event evalevents.ConfigEvent)
 
 	// ###############################################################################################################
 	// PROCESSING COMPLIANCE CHECKING METHODS
@@ -71,6 +71,7 @@ type Evaluator interface {
 
 	// increment wait group counter
 	IncrementWaitGroup()
+	Wait()
 
 	// ###############################################################################################################
 	// GETTER & SETTER METHODS
@@ -264,7 +265,7 @@ func newEvaluator(logger logger.Logger) *_Evaluator {
 // ###############################################################################################################
 
 // handle config event
-func (e *_Evaluator) HandleConfigEvent(event evalevents.ConfigEvent) error {
+func (e *_Evaluator) HandleConfigEvent(event evalevents.ConfigEvent) {
 	e.SetResultToken(event.ResultToken)
 	resultsBuffer := make(chan evaltypes.ComplianceEvaluation, len(e.iamClientMap)) // buffered channel to send / receive results on
 	// loop through accounts in client map and process compliance check in go routine
@@ -306,7 +307,6 @@ func (e *_Evaluator) HandleConfigEvent(event evalevents.ConfigEvent) error {
 	}
 	// send remaining results to aws config
 	e.SendEvaluations(batchEvaluations)
-	return nil
 }
 
 // ###############################################################################################################
@@ -693,6 +693,11 @@ func (e *_Evaluator) IsValidScope(scope string) bool {
 // increment wait group
 func (e *_Evaluator) IncrementWaitGroup() {
 	e.wg.Add(1)
+}
+
+// wait for evaluator to finish
+func (e *_Evaluator) Wait() {
+	e.wg.Wait()
 }
 
 // ###############################################################################################################
