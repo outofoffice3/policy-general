@@ -3,7 +3,7 @@ package evaluator
 import (
 	"log"
 
-	"github.com/outofoffice3/policy-general/internal/evaluator/evaltypes"
+	"github.com/outofoffice3/policy-general/internal/shared"
 )
 
 // errors that occur during initialization
@@ -31,8 +31,8 @@ func (e GeneralError) Error() string {
 // errors that occur during the execution of evaluation compliance.  These errors needs to be
 // handled carefully since they will occur in its own go routine.
 type ProcessingError struct {
-	ComplianceEvaluation evaltypes.ComplianceEvaluation
-	Result               chan<- evaltypes.ComplianceEvaluation
+	ComplianceEvaluation shared.ComplianceEvaluation
+	Result               chan<- shared.ComplianceEvaluation
 	Message              string
 }
 

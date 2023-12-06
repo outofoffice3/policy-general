@@ -1,4 +1,4 @@
-package evaluator
+package exporter
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/outofoffice3/common/logger"
 	"github.com/outofoffice3/policy-general/internal/entrymgr"
-	"github.com/outofoffice3/policy-general/internal/evaluator/evaltypes"
+	"github.com/outofoffice3/policy-general/internal/shared"
 )
 
 type Exporter interface {
@@ -24,7 +24,7 @@ type Exporter interface {
 	// export entries to AWS S3 bucket
 	ExportToS3(bucket string) error
 	// add entry
-	Add(entry evaltypes.ComplianceEvaluation) error
+	Add(entry shared.ComplianceEvaluation) error
 	// get logger
 	GetLogger() logger.Logger
 }
@@ -51,8 +51,8 @@ func NewExporter(sos logger.Logger) (Exporter, error) {
 }
 
 // add entry
-func (e *_Exporter) Add(entry evaltypes.ComplianceEvaluation) error {
-	return e.entryMgr.Add(evaltypes.ExecutionLogEntry{
+func (e *_Exporter) Add(entry shared.ComplianceEvaluation) error {
+	return e.entryMgr.Add(shared.ExecutionLogEntry{
 		Timestamp:    entry.Timestamp.Format(time.RFC3339),
 		Compliance:   string(entry.ComplianceResult.Compliance),
 		Arn:          entry.Arn,
@@ -93,7 +93,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	sos.Infof("Insufficient data entries written to", EXECUTION_LOG_FILE_NAME)
+	sos.Infof("Insufficient data entries written to", shared.EXECUTION_LOG_FILE_NAME)
 
 	// write non compliant entries
 	nonCompliantEntries, err := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeNonCompliant))
@@ -105,7 +105,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	sos.Infof("Non compliant entries written to", EXECUTION_LOG_FILE_NAME)
+	sos.Infof("Non compliant entries written to", shared.EXECUTION_LOG_FILE_NAME)
 
 	// write compliant entries
 	compliantEntries, err := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeCompliant))
@@ -117,7 +117,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	sos.Infof("Compliant entries written to", EXECUTION_LOG_FILE_NAME)
+	sos.Infof("Compliant entries written to", shared.EXECUTION_LOG_FILE_NAME)
 
 	return nil
 }
@@ -133,7 +133,7 @@ func (e *_Exporter) ExportToS3(bucket string) error {
 	timeNow := time.Now()
 	_, err = e.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
-		Key:    aws.String(timeNow.Format(time.RFC3339) + "/" + EXECUTION_LOG_FILE_NAME + ".csv"),
+		Key:    aws.String(timeNow.Format(time.RFC3339) + "/" + shared.EXECUTION_LOG_FILE_NAME + ".csv"),
 		Body:   file,
 	})
 
@@ -142,7 +142,7 @@ func (e *_Exporter) ExportToS3(bucket string) error {
 		return err
 	}
 
-	sos.Infof("File uploaded to %s/%s\n", CONFIG_FILE_BUCKET_NAME, EXECUTION_LOG_FILE_NAME)
+	sos.Infof("File uploaded to %s/%s\n", shared.CONFIG_FILE_BUCKET_NAME, shared.EXECUTION_LOG_FILE_NAME)
 	return nil
 }
 

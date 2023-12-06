@@ -4,33 +4,33 @@ import (
 	"errors"
 
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
-	"github.com/outofoffice3/policy-general/internal/evaluator/evaltypes"
+	"github.com/outofoffice3/policy-general/internal/shared"
 )
 
 type EntryMgr interface {
 	// add entry
-	Add(entry evaltypes.ExecutionLogEntry) error
+	Add(entry shared.ExecutionLogEntry) error
 	// get entries
-	GetEntries(compliance string) ([]evaltypes.ExecutionLogEntry, error)
+	GetEntries(compliance string) ([]shared.ExecutionLogEntry, error)
 }
 
 type _EntryMgr struct {
-	insufficientData []evaltypes.ExecutionLogEntry
-	compliant        []evaltypes.ExecutionLogEntry
-	nonCompliant     []evaltypes.ExecutionLogEntry
+	insufficientData []shared.ExecutionLogEntry
+	compliant        []shared.ExecutionLogEntry
+	nonCompliant     []shared.ExecutionLogEntry
 }
 
 // create new entry manager
 func NewEntryMgr() EntryMgr {
 	return &_EntryMgr{
-		insufficientData: []evaltypes.ExecutionLogEntry{},
-		compliant:        []evaltypes.ExecutionLogEntry{},
-		nonCompliant:     []evaltypes.ExecutionLogEntry{},
+		insufficientData: []shared.ExecutionLogEntry{},
+		compliant:        []shared.ExecutionLogEntry{},
+		nonCompliant:     []shared.ExecutionLogEntry{},
 	}
 }
 
 // add entry
-func (em *_EntryMgr) Add(entry evaltypes.ExecutionLogEntry) error {
+func (em *_EntryMgr) Add(entry shared.ExecutionLogEntry) error {
 	// based on compliance, add entry to corresponding slice
 	switch entry.Compliance {
 	case string(configServiceTypes.ComplianceTypeInsufficientData):
@@ -54,7 +54,7 @@ func (em *_EntryMgr) Add(entry evaltypes.ExecutionLogEntry) error {
 }
 
 // get entries
-func (em *_EntryMgr) GetEntries(compliance string) ([]evaltypes.ExecutionLogEntry, error) {
+func (em *_EntryMgr) GetEntries(compliance string) ([]shared.ExecutionLogEntry, error) {
 	// based on compliance, return corresponding slice
 	switch compliance {
 	case string(configServiceTypes.ComplianceTypeInsufficientData):

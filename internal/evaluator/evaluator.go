@@ -23,6 +23,7 @@ import (
 	"github.com/outofoffice3/common/logger"
 	"github.com/outofoffice3/policy-general/internal/evaluator/evalevents"
 	"github.com/outofoffice3/policy-general/internal/evaluator/evaltypes"
+	"github.com/outofoffice3/policy-general/internal/shared"
 )
 
 /*
@@ -46,11 +47,11 @@ type Evaluator interface {
 	// ###############################################################################################################
 
 	// check identity policies compliance for all iam roles in given aws account
-	ProcessComplianceForRoles(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation)
+	ProcessComplianceForRoles(accountId string, resultsBuffer chan<- shared.ComplianceEvaluation)
 	// check identity policies compliance for all iam users in a given aws account
-	ProcessComplianceForUsers(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation)
+	ProcessComplianceForUsers(accountId string, resultsBuffer chan<- shared.ComplianceEvaluation)
 	// check identity policies compliance for both iam users and iam roles in a given aws account
-	ProcessComplianceForAll(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation)
+	ProcessComplianceForAll(accountId string, resultsBuffer chan<- shared.ComplianceEvaluation)
 
 	// ###############################################################################################################
 	// DATA VALIDATION METHODS
@@ -61,7 +62,7 @@ type Evaluator interface {
 	// validate scope value
 	IsValidScope(scope string) bool
 	// evaulate if a policy document is compliant
-	IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (evaltypes.ComplianceResult, error)
+	IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (shared.ComplianceResult, error)
 	// send evaluation response to AWS config
 	SendEvaluations(evaluations []configServiceTypes.Evaluation)
 
@@ -148,12 +149,12 @@ func Init(log logger.Logger) Evaluator {
 	sos.Infof("evaluator init started")
 
 	// read env vars for config file location
-	evaluatorConfigBucketName := os.Getenv(CONFIG_FILE_BUCKET_NAME)
+	evaluatorConfigBucketName := os.Getenv(shared.CONFIG_FILE_BUCKET_NAME)
 	if evaluatorConfigBucketName != "" {
 		complianceEvaluator.SetS3BucketName(evaluatorConfigBucketName)
 	}
 
-	evaluatorConfigObjectKey := os.Getenv(CONFIG_FILE_KEY)
+	evaluatorConfigObjectKey := os.Getenv(shared.CONFIG_FILE_KEY)
 	if evaluatorConfigObjectKey != "" {
 		complianceEvaluator.SetConfigFileKey(evaluatorConfigObjectKey)
 	}
@@ -180,7 +181,7 @@ func Init(log logger.Logger) Evaluator {
 		HandleError(initErr, nil)
 	}
 
-	// read file contents and serialize to evaltypes.Config struct
+	// read file contents and serialize to shared.Config struct
 	var policyGeneralConfig evaltypes.Config
 	objectContent, err := io.ReadAll(getObjectOutput.Body)
 	// return errors
@@ -267,14 +268,14 @@ func newEvaluator(logger logger.Logger) *_Evaluator {
 // handle config event
 func (e *_Evaluator) HandleConfigEvent(event evalevents.ConfigEvent) {
 	e.SetResultToken(event.ResultToken)
-	resultsBuffer := make(chan evaltypes.ComplianceEvaluation, len(e.iamClientMap)) // buffered channel to send / receive results on
+	resultsBuffer := make(chan shared.ComplianceEvaluation, len(e.iamClientMap)) // buffered channel to send / receive results on
 	// loop through accounts in client map and process compliance check in go routine
 	for accountId := range e.iamClientMap {
 		e.ProcessComplianceCheck(accountId, resultsBuffer) // process check in go routine
 		e.Logger.Debugf("processing compliance check for account [%v]", accountId)
 	}
 
-	go func(wg *sync.WaitGroup, resultChannel chan evaltypes.ComplianceEvaluation) {
+	go func(wg *sync.WaitGroup, resultChannel chan shared.ComplianceEvaluation) {
 		wg.Wait() // wait for results to be processed
 		e.Logger.Debugf("closing results channel")
 		close(resultsBuffer)
@@ -314,7 +315,7 @@ func (e *_Evaluator) HandleConfigEvent(event evalevents.ConfigEvent) {
 // ###############################################################################################################
 
 // process compliance check for an aws account
-func (e *_Evaluator) ProcessComplianceCheck(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation) error {
+func (e *_Evaluator) ProcessComplianceCheck(accountId string, resultsBuffer chan<- shared.ComplianceEvaluation) error {
 	switch strings.ToLower(e.scope) {
 	case "roles":
 		e.wg.Add(1)
@@ -330,7 +331,7 @@ func (e *_Evaluator) ProcessComplianceCheck(accountId string, resultsBuffer chan
 }
 
 // process compliance for iam roles
-func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation) {
+func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer chan<- shared.ComplianceEvaluation) {
 	defer e.wg.Done()
 	iamClient := e.GetAwsIamClient(accountId)
 	accessAnalyzerClient := e.GetAwsAccessAnalyzerClient(accountId)
@@ -341,11 +342,11 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 		// check for errors
 		if err != nil {
 			e.Logger.Errorf("error retrieving list of roles : %v", err)
-			complianceEvaluation := evaltypes.ComplianceEvaluation{
+			complianceEvaluation := shared.ComplianceEvaluation{
 				AccountId:    accountId,
-				ResourceType: evaltypes.NOT_SPECIFIED,
+				ResourceType: shared.NOT_SPECIFIED,
 				Arn:          "",
-				ComplianceResult: evaltypes.ComplianceResult{
+				ComplianceResult: shared.ComplianceResult{
 					Compliance: configServiceTypes.ComplianceTypeInsufficientData,
 					Reasons:    nil,
 					Message:    "",
@@ -373,11 +374,11 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 				// check for errors
 				if err != nil {
 					e.Logger.Errorf("error retrieving list of policies for role [%v] : %v", *role.RoleName, err)
-					complianceEvaluation := evaltypes.ComplianceEvaluation{
+					complianceEvaluation := shared.ComplianceEvaluation{
 						AccountId:    accountId,
-						ResourceType: evaltypes.AWS_IAM_ROLE,
+						ResourceType: shared.AWS_IAM_ROLE,
 						Arn:          *role.Arn,
-						ComplianceResult: evaltypes.ComplianceResult{
+						ComplianceResult: shared.ComplianceResult{
 							Compliance: configServiceTypes.ComplianceTypeInsufficientData,
 							Reasons:    nil,
 							Message:    "",
@@ -405,11 +406,11 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 					// check for errors
 					if err != nil {
 						e.Logger.Errorf("error retrieving policy document for policy [%v] : %v", policyName, err)
-						complianceEvaluation := evaltypes.ComplianceEvaluation{
+						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
-							ResourceType: evaltypes.AWS_IAM_ROLE,
+							ResourceType: shared.AWS_IAM_ROLE,
 							Arn:          *role.Arn,
-							ComplianceResult: evaltypes.ComplianceResult{
+							ComplianceResult: shared.ComplianceResult{
 								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
 								Reasons:    nil,
 								Message:    "",
@@ -432,11 +433,11 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 					// check for errors
 					if err != nil {
 						e.Logger.Errorf("error checking compliance for policy [%v] : %v", policyName, err)
-						complianceEvaluation := evaltypes.ComplianceEvaluation{
+						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
-							ResourceType: evaltypes.AWS_IAM_ROLE,
+							ResourceType: shared.AWS_IAM_ROLE,
 							Arn:          *role.Arn,
-							ComplianceResult: evaltypes.ComplianceResult{
+							ComplianceResult: shared.ComplianceResult{
 								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
 								Reasons:    nil,
 								Message:    "",
@@ -454,7 +455,7 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 					}
 					// send compliance result to results channel
 					e.wg.Add(1)
-					resultsBuffer <- evaltypes.ComplianceEvaluation{
+					resultsBuffer <- shared.ComplianceEvaluation{
 						AccountId:        accountId,
 						Arn:              *role.Arn,
 						ComplianceResult: isCompliantResult,
@@ -466,7 +467,7 @@ func (e *_Evaluator) ProcessComplianceForRoles(accountId string, resultsBuffer c
 }
 
 // process compliance for iam users
-func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation) {
+func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer chan<- shared.ComplianceEvaluation) {
 	defer e.wg.Done()
 	iamClient := e.GetAwsIamClient(accountId)
 	accessAnalyzerClient := e.GetAwsAccessAnalyzerClient(accountId)
@@ -477,11 +478,11 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 		// check for errors
 		if err != nil {
 			e.Logger.Errorf("error retrieving list of users : %v", err)
-			complianceEvaluation := evaltypes.ComplianceEvaluation{
+			complianceEvaluation := shared.ComplianceEvaluation{
 				AccountId:    accountId,
-				ResourceType: evaltypes.NOT_SPECIFIED,
+				ResourceType: shared.NOT_SPECIFIED,
 				Arn:          "",
-				ComplianceResult: evaltypes.ComplianceResult{
+				ComplianceResult: shared.ComplianceResult{
 					Compliance: configServiceTypes.ComplianceTypeInsufficientData,
 					Reasons:    nil,
 					Message:    "",
@@ -509,11 +510,11 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 				// check for errors
 				if err != nil {
 					e.Logger.Errorf("error retrieving list of policies for user [%v] : %v", *user.UserName, err)
-					complianceEvaluation := evaltypes.ComplianceEvaluation{
+					complianceEvaluation := shared.ComplianceEvaluation{
 						AccountId:    accountId,
-						ResourceType: evaltypes.AWS_IAM_USER,
+						ResourceType: shared.AWS_IAM_USER,
 						Arn:          *user.Arn,
-						ComplianceResult: evaltypes.ComplianceResult{
+						ComplianceResult: shared.ComplianceResult{
 							Compliance: configServiceTypes.ComplianceTypeInsufficientData,
 							Reasons:    nil,
 							Message:    "",
@@ -541,11 +542,11 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 					// check for errors
 					if err != nil {
 						e.Logger.Errorf("error retrieving policy document for policy [%v] : %v", policyName, err)
-						complianceEvaluation := evaltypes.ComplianceEvaluation{
+						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
-							ResourceType: evaltypes.AWS_IAM_USER,
+							ResourceType: shared.AWS_IAM_USER,
 							Arn:          *user.Arn,
-							ComplianceResult: evaltypes.ComplianceResult{
+							ComplianceResult: shared.ComplianceResult{
 								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
 								Reasons:    nil,
 								Message:    "",
@@ -568,11 +569,11 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 					// check for errors
 					if err != nil {
 						e.Logger.Errorf("error checking compliance for policy [%v] : %v", policyName, err)
-						complianceEvaluation := evaltypes.ComplianceEvaluation{
+						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    "",
-							ResourceType: evaltypes.AWS_IAM_USER,
+							ResourceType: shared.AWS_IAM_USER,
 							Arn:          *user.Arn,
-							ComplianceResult: evaltypes.ComplianceResult{
+							ComplianceResult: shared.ComplianceResult{
 								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
 								Reasons:    nil,
 								Message:    "",
@@ -590,7 +591,7 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 					}
 					// send compliance result to results channel
 					e.wg.Add(1)
-					resultsBuffer <- evaltypes.ComplianceEvaluation{
+					resultsBuffer <- shared.ComplianceEvaluation{
 						AccountId:        accountId,
 						Arn:              *user.Arn,
 						ComplianceResult: isCompliantResult,
@@ -602,7 +603,7 @@ func (e *_Evaluator) ProcessComplianceForUsers(accountId string, resultsBuffer c
 }
 
 // process compliance for iam users and iam roles
-func (e *_Evaluator) ProcessComplianceForAll(accountId string, resultsBuffer chan<- evaltypes.ComplianceEvaluation) {
+func (e *_Evaluator) ProcessComplianceForAll(accountId string, resultsBuffer chan<- shared.ComplianceEvaluation) {
 	defer e.wg.Done()
 	e.wg.Add(1)
 	go e.ProcessComplianceForUsers(accountId, resultsBuffer)
@@ -611,7 +612,7 @@ func (e *_Evaluator) ProcessComplianceForAll(accountId string, resultsBuffer cha
 }
 
 // check if policy document is compliant
-func (e *_Evaluator) IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (evaltypes.ComplianceResult, error) {
+func (e *_Evaluator) IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (shared.ComplianceResult, error) {
 	input := accessanalyzer.CheckAccessNotGrantedInput{
 		Access: []accessAnalyzerTypes.Access{
 			{
@@ -626,16 +627,16 @@ func (e *_Evaluator) IsCompliant(client *accessanalyzer.Client, policyDocument s
 	// check for errors
 	if err != nil {
 		e.Logger.Errorf("error checking compliance for policy document : %v", err)
-		return evaltypes.ComplianceResult{}, err
+		return shared.ComplianceResult{}, err
 	}
 	if output.Result == accessAnalyzerTypes.CheckAccessNotGrantedResultPass {
-		return evaltypes.ComplianceResult{
+		return shared.ComplianceResult{
 			Compliance: configServiceTypes.ComplianceTypeCompliant,
 			Reasons:    output.Reasons,
 			Message:    *output.Message,
 		}, nil
 	}
-	return evaltypes.ComplianceResult{
+	return shared.ComplianceResult{
 		Compliance: configServiceTypes.ComplianceTypeNonCompliant,
 		Reasons:    output.Reasons,
 		Message:    *output.Message,

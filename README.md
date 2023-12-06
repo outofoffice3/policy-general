@@ -13,13 +13,13 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
   - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
   - [Resources Required by User](#resources-required-by-user)
+    - [S3 Bucket](#s3-bucket)
     - [IAM Role(s)](#iam-roles)
     - [Trust Policy](#trust-policy)
 - [Resources Created](#resources-created-by-solution)
   - [Custom AWS Config Rule](#custom-config-rule)
   - [Lambda Function](#lambda-function)
   - [Lambda Exeuction Role](#lambda-execution-role)
-  - [S3 Bucket](#s3-bucket)
 - [How it works](#how-it-works)
   - [Configuration](#configuration)
   - [Initialization](#initialization)
@@ -60,6 +60,11 @@ Install AWS SAM CLI by following the [AWS SAM CLI Installation Guide](https://do
 Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install).
 
 ### Resources required by user
+
+#### S3 Bucket
+- **Purpose** - where config file & execution log results will be stored
+- **BucketName** - 
+- **Region**  - 
 
 #### IAM Role(s)
 
@@ -153,15 +158,15 @@ Please read each section below for more information about each created resource.
 #### Custom Config Rule 
 
 - **Purpose** : check IAM identity policy compliance on an ongoing basis. 
-- **Name** : checkNoAccess-2023
+- **Name** : checkNoAccess
 - **Type** : Periodic 
-- **Interval** : Daily 
+- **Maximum Execution Frequency** : 24 hours (default) 
 - **Lambda Function** : see section [Lambda Function](#lambda-function)
 
 #### Lambda Function 
 
 - **Purpose** - runs when config rule is invoked
-- **Function Name** - checkNoAccess-aws-config-2023
+- **Function Name** - checkNoAccess-aws-config
 - **Memory Confiuration** - 256MB
 - **Execution Role** - see section [Lambda Execution Role](#lambda-execution-role)
 
@@ -238,10 +243,6 @@ Below are the permissions used for the lambda function execution role:
   ]
 }
 ```
-#### S3 Bucket
-- **Purpose** - where config file & execution log results will be stored
-- **BucketName** - 
-- **Region**  - 
 
 ## How it works
 

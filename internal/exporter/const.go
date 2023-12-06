@@ -1,10 +1,6 @@
-package evaluator
+package exporter
 
 const (
-	CONFIG_FILE_BUCKET_NAME string = "CONFIG_FILE_BUCKET_NAME"
-	CONFIG_FILE_KEY         string = "CONFIG_FILE_KEY"
-	EXECUTION_LOG_FILE_NAME string = "checkNoAccess-aws-config"
-
 	TIMESTAMP     string = "Timestamp"
 	COMPLIANCE    string = "Compliance"
 	ARN           string = "Arn"
