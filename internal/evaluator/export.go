@@ -3,7 +3,6 @@ package evaluator
 import (
 	"context"
 	"encoding/csv"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -11,22 +10,35 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	accessTypes "github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
+	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
+
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/outofoffice3/common/logger"
+	"github.com/outofoffice3/policy-general/internal/entrymgr"
 	"github.com/outofoffice3/policy-general/internal/evaluator/evaltypes"
 )
 
 type Exporter interface {
 	// write to csv
-	WriteToCSV(entries []evaltypes.ComplianceEvaluation, fileName string) error
+	WriteToCSV(filename string) error
 	// export entries to AWS S3 bucket
-	ExportToS3(entries []evaltypes.ComplianceEvaluation) error
+	ExportToS3(bucket string) error
+	// add entry
+	Add(entry evaltypes.ComplianceEvaluation) error
+	// get logger
+	GetLogger() logger.Logger
 }
 
 type _Exporter struct {
-	s3Client *s3.Client // client for S3
+	s3Client *s3.Client        // client for S3
+	entryMgr entrymgr.EntryMgr // manage execution log entries
+	filename string            // filename for execution log
+	logger   logger.Logger     // logger
+
 }
 
-func NewExporter() (*_Exporter, error) {
+// create new exporter
+func NewExporter(sos logger.Logger) (Exporter, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
 		return nil, err
@@ -34,11 +46,29 @@ func NewExporter() (*_Exporter, error) {
 	s3Client := s3.NewFromConfig(cfg)
 	return &_Exporter{
 		s3Client: s3Client,
+		logger:   sos,
 	}, nil
 }
 
-func (e *_Exporter) WriteToCSV(entries []evaltypes.ComplianceEvaluation) error {
-	file, err := os.Create(evaltypes.EXECUTION_LOG_FILE_NAME)
+// add entry
+func (e *_Exporter) Add(entry evaltypes.ComplianceEvaluation) error {
+	return e.entryMgr.Add(evaltypes.ExecutionLogEntry{
+		Timestamp:    entry.Timestamp.Format(time.RFC3339),
+		Compliance:   string(entry.ComplianceResult.Compliance),
+		Arn:          entry.Arn,
+		ResourceType: string(entry.ResourceType),
+		Reasons:      joinReasons(entry.ComplianceResult.Reasons, ";"),
+		Message:      entry.ComplianceResult.Message,
+		ErrMsg:       entry.ErrMsg,
+		AccountId:    entry.AccountId,
+	})
+}
+
+// write entries to csv
+func (e *_Exporter) WriteToCSV(filename string) error {
+	sos := e.GetLogger()
+	e.filename = filename
+	file, err := os.Create(filename)
 	if err != nil {
 		return err
 	}
@@ -48,63 +78,71 @@ func (e *_Exporter) WriteToCSV(entries []evaltypes.ComplianceEvaluation) error {
 	defer writer.Flush()
 
 	// Writing header
-	header := []string{"Timestamp", "Compliance", "Arn", "ResourceType", "Reasons", "Message", "ErrMsg", "AccountId"}
+	header := []string{TIMESTAMP, COMPLIANCE, ARN, RESOURCE_TYPE, REASONS, MESSAGE, ERR_MSG, ACCOUNT_ID}
 	if err := writer.Write(header); err != nil {
 		return err
 	}
 
-	// Writing data
-	for _, entry := range entries {
-		// flatten reasons array and create execution log entry
-		reasons := joinReasons(entry.ComplianceResult.Reasons, ";")
-		executionLogEntry := evaltypes.ExecutionLogEntry{
-			Timestamp:    entry.Timestamp.Format(time.RFC3339),
-			Compliance:   entry.ComplianceResult.Compliance,
-			Arn:          entry.Arn,
-			ResourceType: entry.ResourceType,
-			Reasons:      reasons,
-			Message:      entry.ComplianceResult.Message,
-			ErrMsg:       entry.ErrMsg,
-			AccountId:    entry.AccountId,
-		}
-
-		// map entry to row item for csv
-		row := []string{
-			executionLogEntry.Timestamp,
-			string(executionLogEntry.Compliance),
-			executionLogEntry.Arn,
-			string(executionLogEntry.ResourceType),
-			executionLogEntry.Reasons,
-			executionLogEntry.Message,
-			executionLogEntry.ErrMsg,
-			executionLogEntry.AccountId,
-		}
-		if err := writer.Write(row); err != nil {
+	// Write insufficient data entries
+	insufficientDataEntries, err := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeInsufficientData))
+	if err != nil {
+		return err
+	}
+	for _, entry := range insufficientDataEntries {
+		if err := writer.Write([]string{entry.Timestamp, string(entry.Compliance), entry.Arn, entry.ResourceType, entry.Reasons, entry.Message, entry.ErrMsg, entry.AccountId}); err != nil {
 			return err
 		}
 	}
+	sos.Infof("Insufficient data entries written to", EXECUTION_LOG_FILE_NAME)
+
+	// write non compliant entries
+	nonCompliantEntries, err := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeNonCompliant))
+	if err != nil {
+		return err
+	}
+	for _, entry := range nonCompliantEntries {
+		if err := writer.Write([]string{entry.Timestamp, string(entry.Compliance), entry.Arn, entry.ResourceType, entry.Reasons, entry.Message, entry.ErrMsg, entry.AccountId}); err != nil {
+			return err
+		}
+	}
+	sos.Infof("Non compliant entries written to", EXECUTION_LOG_FILE_NAME)
+
+	// write compliant entries
+	compliantEntries, err := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeCompliant))
+	if err != nil {
+		return err
+	}
+	for _, entry := range compliantEntries {
+		if err := writer.Write([]string{entry.Timestamp, string(entry.Compliance), entry.Arn, entry.ResourceType, entry.Reasons, entry.Message, entry.ErrMsg, entry.AccountId}); err != nil {
+			return err
+		}
+	}
+	sos.Infof("Compliant entries written to", EXECUTION_LOG_FILE_NAME)
+
 	return nil
 }
 
-func (e *_Exporter) ExportToS3(entries []evaltypes.ComplianceEvaluation) error {
-	file, err := os.Open(evaltypes.EXECUTION_LOG_FILE_NAME)
+func (e *_Exporter) ExportToS3(bucket string) error {
+	sos := e.GetLogger()
+	file, err := os.Open(e.filename)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
+	timeNow := time.Now()
 	_, err = e.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
-		Bucket: aws.String(os.Getenv(evaltypes.CONFIG_FILE_BUCKET_NAME)),
-		Key:    aws.String(evaltypes.EXECUTION_LOG_FILE_NAME),
+		Bucket: aws.String(bucket),
+		Key:    aws.String(timeNow.Format(time.RFC3339) + "/" + EXECUTION_LOG_FILE_NAME + ".csv"),
 		Body:   file,
 	})
 
 	if err != nil {
-		fmt.Println("Error uploading to S3:", err)
+		sos.Errorf("Error uploading to S3:", err)
 		return err
 	}
 
-	fmt.Printf("File uploaded to %s/%s\n", evaltypes.CONFIG_FILE_BUCKET_NAME, evaltypes.EXECUTION_LOG_FILE_NAME)
+	sos.Infof("File uploaded to %s/%s\n", CONFIG_FILE_BUCKET_NAME, EXECUTION_LOG_FILE_NAME)
 	return nil
 }
 
@@ -115,4 +153,9 @@ func joinReasons(reasons []accessTypes.ReasonSummary, separator string) string {
 		// You can include other fields from ReasonSummary if needed
 	}
 	return strings.Join(reasonsStrs, separator)
+}
+
+// get logger
+func (e *_Exporter) GetLogger() logger.Logger {
+	return e.logger
 }

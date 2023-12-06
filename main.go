@@ -31,7 +31,7 @@ func handler(ctx context.Context, event events.CloudWatchEvent) error {
 	err := complianceEvaluator.HandleConfigEvent(configEvent)
 	// return errors
 	if err != nil {
-		evaluator.HandleError(err, nil)
+		return err
 	}
 	return nil
 }

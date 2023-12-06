@@ -76,6 +76,14 @@ type Evaluator interface {
 	// GETTER & SETTER METHODS
 	// ###############################################################################################################
 
+	// set s3 bucketname
+	SetS3BucketName(string)
+	// get s3 bucketname
+	GetS3BucketName() string
+	// set config file object key
+	SetConfigFileKey(string)
+	// get config file object key
+	GetConfigFileKey() string
 	// sets scope based on config file
 	SetScope(scope string)
 	// get scope
@@ -108,6 +116,8 @@ type _Evaluator struct {
 	wg                      *sync.WaitGroup                   // wait group for go routines
 	scope                   string                            // scope of policies you want to cover.  roles , users or all
 	resultToken             string                            // token for config evaluation result
+	bucketName              string                            // s3 bucket name
+	configFileKey           string                            // config file object key
 	configClient            *configservice.Client             // client for AWS Config
 	iamClientMap            map[string]*iam.Client            // iam client map for cross account access
 	accessAnalyzerClientMap map[string]*accessanalyzer.Client // access analyer client map for cross account access
@@ -121,41 +131,6 @@ type _Evaluator struct {
 
 // initialize evaluator
 func Init(log logger.Logger) Evaluator {
-	/*
-			To initialize, evaluator expects a config file in the following format :
-			{
-		  "awsAccounts": [
-		    {
-		      "accountId": "your_account_id_1",
-		      "roleName": "YourServiceRoleName1"
-		    },
-		    {
-		      "accountId": "your_account_id_2",
-		      "roleName": "YourServiceRoleName2"
-		    }
-		  ],
-		  "actions": [
-		    "s3:GetObject",
-		    "s3:PutObject",
-		    "ec2:DescribeInstances",
-		    "lambda:InvokeFunction"
-		  ],
-		  "scope": "all" // valid values = roles, user or all
-		}
-
-		The config file will be stored in S3 and the object key will be loaded in the environment
-		variable CONFIG_FILE_KEY.  Read the file from s3 and serialze into the evaltypes.Config type.
-
-		type Config struct {
-			AwsAccounts []AwsAccount `json:"awsAccounts"`
-			Actions     []string     `json:"actions"`
-			Scope       string       `json:"scope"`
-		}
-
-		Load the client map with *iam.Clients that all have assumed the respective role from the Config.
-		They [key] = accound id and [value] = *iam.Client.  Set the scope based on the config file.
-		Validate each action from the config file.
-	*/
 	var (
 		defaultLogger       logger.Logger
 		complianceEvaluator Evaluator
@@ -172,8 +147,15 @@ func Init(log logger.Logger) Evaluator {
 	sos.Infof("evaluator init started")
 
 	// read env vars for config file location
-	evaluatorConfigBucketName := os.Getenv("CONFIG_FILE_BUCKET_NAME")
-	evaluatorConfigObjectKey := os.Getenv("CONFIG_FILE_KEY")
+	evaluatorConfigBucketName := os.Getenv(CONFIG_FILE_BUCKET_NAME)
+	if evaluatorConfigBucketName != "" {
+		complianceEvaluator.SetS3BucketName(evaluatorConfigBucketName)
+	}
+
+	evaluatorConfigObjectKey := os.Getenv(CONFIG_FILE_KEY)
+	if evaluatorConfigObjectKey != "" {
+		complianceEvaluator.SetConfigFileKey(evaluatorConfigObjectKey)
+	}
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	// return errors
 	if err != nil {
@@ -780,4 +762,24 @@ func (e *_Evaluator) SetScope(scope string) {
 // get scope
 func (e *_Evaluator) GetScope() string {
 	return e.scope
+}
+
+// set s3 bucketname
+func (e *_Evaluator) SetS3BucketName(bucketName string) {
+	e.bucketName = bucketName
+}
+
+// get s3 bucketname
+func (e *_Evaluator) GetS3BucketName() string {
+	return e.bucketName
+}
+
+// set config file key
+func (e *_Evaluator) SetConfigFileKey(key string) {
+	e.configFileKey = key
+}
+
+// get config file key
+func (e *_Evaluator) GetConfigFileKey() string {
+	return e.configFileKey
 }

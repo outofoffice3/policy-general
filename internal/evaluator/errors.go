@@ -70,7 +70,6 @@ func HandleError(err error, evaluator Evaluator) {
 			log.Println(err.Error())
 			resultChannel := err.(ProcessingError).Result
 			complianceEvaluation := err.(ProcessingError).ComplianceEvaluation
-
 			evaluator.IncrementWaitGroup()        // increment wait group
 			resultChannel <- complianceEvaluation // send evaluation to results buffer channel
 		}
