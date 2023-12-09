@@ -1,15 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  sam-lambda
+  policy-general-2023
 
-  Sample SAM Template for sam-lambda
+  AWS SAM Template to deploy lambda function
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
     Timeout: 60
-    MemorySize: 128
+    MemorySize: 256
 
     Tracing: Active
 Resources:
@@ -27,9 +27,47 @@ Resources:
         Variables:
           CONFIG_FILE_BUCKET_NAME: policy-general-2023
           CONFIG_FILE : config.json
-      Role: arn:aws:iam::033197602013:role/policy-general-2023
+      Policies:
+        Statement:
+          - Sid: "CloudWatchLogs"
+            Effect: "Allow"
+            Action:
+              - "logs:CreateLogGroup"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+            Resource: "*"
+
+          - Sid: "XRay"
+            Effect: "Allow"
+            Action:
+              - "xray:PutTelemetryRecords"
+              - "xray:PutTraceSegments"
+            Resource: "*"
+
+          - Sid: "S3BucketAccess"
+            Effect: "Allow"
+            Action:
+              - "s3:GetObject"
+              - "s3:PutObject"
+            Resource: "arn:aws:s3:::your-specific-bucket-name/*"
+
+          - Sid: "IAMActions"
+            Effect: "Allow"
+            Action:
+              - "iam:ListUsers"
+              - "iam:ListRoles"
+              - "iam:ListAttachedUserPolicies"
+              - "iam:ListAttachedRolePolicies"
+            Resource: "*"
+
+          - Sid: "ConfigAndAccessAnalyzer"
+            Effect: "Allow"
+            Action:
+              - "config:PutEvaluations"
+              - "access-analyzer:CheckAccessNotGranted"
+            Resource: "*"
 
 Outputs:
   AWSConfigRuleLambda:
-    Description: First Lambda Function ARN
+    Description: Lambda function ARN
     Value: !GetAtt AWSConfigRuleLambda.Arn

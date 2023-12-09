@@ -11,6 +11,7 @@ Policy General is a solution designed to enforce compliance of IAM (Identity and
 ## Table of Contents
 - [Overview](#overview)
   - [Project Structure](#project-structure)
+  - [Package Descriptions](#package-descriptions)
 - [Prerequisites](#prerequisites)
   - [Resources Required by User](#resources-required-by-user)
     - [S3 Bucket](#s3-bucket)
@@ -39,12 +40,23 @@ This solution enhances security and compliance by enforcing IAM policy restricti
 ```bash 
 |-- deployment/           # deployment files
   |-- cdk-config-rule/    # cdk app for deploying aws config rule
-  |-- sam-lambda/         # sam template for deploying lambda func        
-|-- pkg/                  # packages 
-  |-- evaluator/          # evaluator package
-    |-- evalevents/       # evaluator event types
-    |-- evaltypes/        # evaluator types
+  |-- sam-lambda/         # sam template for deploying lambda func  
+|-- handle/                    # event handler      
+|-- internal/                   # internal pkgs 
+  |-- awsclientmgr/             # aws client manager
+  |-- entrymgr/                 # entry manager    
+  |-- exporter/                 # exporter
+  |-- iampolicyevaluator/       # iam policy evaluator
+  |-- shared/                   # shared 
 ```
+#### Package Descriptions
+
+- `handle` - handles config event (entry point for processing)
+- `awslcientmgr` - stores sdk clients used (iam, s3, access analyzer) 
+- `entrymgr` - manages execution log entries 
+- `exporter` - writes execution log entries to csv & publishes to S3 bucket
+- `iampolicyevaluator` - main interface.  Process compliance checks
+- `shared` - shared constants & types
 
 ## Prerequisites
 
@@ -63,8 +75,8 @@ Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aw
 
 #### S3 Bucket
 - **Purpose** - where config file & execution log results will be stored
-- **BucketName** - 
-- **Region**  - 
+- **BucketName** - user provided
+- **Region**  - user provided
 
 #### IAM Role(s)
 
