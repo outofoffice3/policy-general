@@ -28,7 +28,7 @@ func TestEntryMgr(t *testing.T) {
 
 	insufficientData := shared.ExecutionLogEntry{
 		AccountId:    "",
-		ResourceType: string(shared.AWS_IAM_ROLE),
+		ResourceType: string(shared.AwsIamRole),
 		Compliance:   string(types.ComplianceTypeInsufficientData),
 		Reasons:      "",
 		Message:      "",
@@ -41,7 +41,7 @@ func TestEntryMgr(t *testing.T) {
 
 	nonCompliant := shared.ExecutionLogEntry{
 		AccountId:    "",
-		ResourceType: string(shared.AWS_IAM_ROLE),
+		ResourceType: string(shared.AwsIamRole),
 		Compliance:   string(types.ComplianceTypeNonCompliant),
 		Reasons:      "",
 		Message:      "",
@@ -54,7 +54,7 @@ func TestEntryMgr(t *testing.T) {
 
 	compliant := shared.ExecutionLogEntry{
 		AccountId:    "",
-		ResourceType: string(shared.AWS_IAM_ROLE),
+		ResourceType: string(shared.AwsIamRole),
 		Compliance:   string(types.ComplianceTypeCompliant),
 		Reasons:      "",
 		Message:      "",
@@ -67,7 +67,7 @@ func TestEntryMgr(t *testing.T) {
 
 	shouldThrowError := shared.ExecutionLogEntry{
 		AccountId:    "",
-		ResourceType: string(shared.AWS_IAM_ROLE),
+		ResourceType: string(shared.AwsIamRole),
 		Compliance:   string("non-existent-type"),
 		Reasons:      "",
 		Message:      "",

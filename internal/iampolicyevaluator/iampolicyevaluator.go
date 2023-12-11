@@ -69,6 +69,7 @@ type _IAMPolicyEvaluator struct {
 	wg                *sync.WaitGroup
 	resultToken       string
 	scope             string
+	accountId         string
 	restrictedActions []string
 	logger            logger.Logger
 	results           chan shared.ComplianceEvaluation
@@ -77,7 +78,7 @@ type _IAMPolicyEvaluator struct {
 }
 
 // returns an instance of iam policy evaluator
-func Init(sos logger.Logger, config shared.Config) IAMPolicyEvaluator {
+func Init(sos logger.Logger, config shared.CheckNoAccessConfig) IAMPolicyEvaluator {
 	if sos == nil {
 		sos = logger.NewConsoleLogger(logger.LogLevelInfo)
 	}
@@ -94,6 +95,7 @@ func Init(sos logger.Logger, config shared.Config) IAMPolicyEvaluator {
 		awsClientMgr: awsClientMgr,
 		exporter:     exporter,
 		logger:       sos,
+		accountID:    config.AccountId,
 	})
 	sos.Debugf("iampolicyevaluator init success")
 	return iamPolicyEvaluator
@@ -106,16 +108,21 @@ type IAMPolicyEvaluatorInput struct {
 	awsClientMgr awsclientmgr.AWSClientMgr
 	exporter     exporter.Exporter
 	logger       logger.Logger
+	accountID    string
 }
 
 // creates a new iam policy evaluator
 func NewIAMPolicyEvaluator(input IAMPolicyEvaluatorInput) IAMPolicyEvaluator {
 	return &_IAMPolicyEvaluator{
-		wg:           input.wg,
-		logger:       input.logger,
-		awsClientMgr: input.awsClientMgr,
-		exporter:     input.exporter,
-		results:      make(chan shared.ComplianceEvaluation, 100),
+		wg:                input.wg,
+		resultToken:       "",
+		scope:             "",
+		accountId:         input.accountID,
+		restrictedActions: nil,
+		logger:            input.logger,
+		results:           make(chan shared.ComplianceEvaluation, 100),
+		awsClientMgr:      input.awsClientMgr,
+		exporter:          input.exporter,
 	}
 }
 
@@ -142,7 +149,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 			i.logger.Errorf("error retrieving list of roles : %v", err)
 			complianceEvaluation := shared.ComplianceEvaluation{
 				AccountId:    accountId,
-				ResourceType: shared.NOT_SPECIFIED,
+				ResourceType: shared.NotSpecified,
 				Arn:          "",
 				ComplianceResult: shared.ComplianceResult{
 					Compliance: configServiceTypes.ComplianceTypeInsufficientData,
@@ -173,7 +180,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 					i.logger.Errorf("error retrieving list of policies for role [%v] : %v", *role.RoleName, err)
 					complianceEvaluation := shared.ComplianceEvaluation{
 						AccountId:    accountId,
-						ResourceType: shared.AWS_IAM_ROLE,
+						ResourceType: shared.AwsIamRole,
 						Arn:          *role.Arn,
 						ComplianceResult: shared.ComplianceResult{
 							Compliance: configServiceTypes.ComplianceTypeInsufficientData,
@@ -204,7 +211,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 						i.logger.Errorf("error retrieving policy document for policy [%v] : %v", policyName, err)
 						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
-							ResourceType: shared.AWS_IAM_ROLE,
+							ResourceType: shared.AwsIamRole,
 							Arn:          *role.Arn,
 							ComplianceResult: shared.ComplianceResult{
 								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
@@ -230,7 +237,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 						i.logger.Errorf("error checking compliance for policy [%v] : %v", policyName, err)
 						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
-							ResourceType: shared.AWS_IAM_ROLE,
+							ResourceType: shared.AwsIamRole,
 							Arn:          *role.Arn,
 							ComplianceResult: shared.ComplianceResult{
 								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
@@ -279,7 +286,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 			i.logger.Errorf("error retrieving list of users : %v", err)
 			complianceEvaluation := shared.ComplianceEvaluation{
 				AccountId:    accountId,
-				ResourceType: shared.NOT_SPECIFIED,
+				ResourceType: shared.NotSpecified,
 				Arn:          "",
 				ComplianceResult: shared.ComplianceResult{
 					Compliance: configServiceTypes.ComplianceTypeInsufficientData,
@@ -310,7 +317,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 					i.logger.Errorf("error retrieving list of policies for user [%v] : %v", *user.UserName, err)
 					complianceEvaluation := shared.ComplianceEvaluation{
 						AccountId:    accountId,
-						ResourceType: shared.AWS_IAM_USER,
+						ResourceType: shared.AwsIamUser,
 						Arn:          *user.Arn,
 						ComplianceResult: shared.ComplianceResult{
 							Compliance: configServiceTypes.ComplianceTypeInsufficientData,
@@ -337,7 +344,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 						i.logger.Errorf("error retrieving policy document for policy [%v] : %v", policyName, err)
 						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
-							ResourceType: shared.AWS_IAM_USER,
+							ResourceType: shared.AwsIamUser,
 							Arn:          *user.Arn,
 							ComplianceResult: shared.ComplianceResult{
 								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
@@ -362,7 +369,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 						i.logger.Errorf("error checking compliance for policy [%v] : %v", policyName, err)
 						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
-							ResourceType: shared.AWS_IAM_USER,
+							ResourceType: shared.AwsIamUser,
 							Arn:          *user.Arn,
 							ComplianceResult: shared.ComplianceResult{
 								Compliance: configServiceTypes.ComplianceTypeInsufficientData,
@@ -402,7 +409,7 @@ func (i *_IAMPolicyEvaluator) processAllCompliance(restrictedActions []string, a
 func (i *_IAMPolicyEvaluator) SendEvaluations(evaluations []configServiceTypes.Evaluation) {
 	sos := i.GetLogger()
 	// retrieve sdk config client
-	accountId, _ := awsclientmgr.GetAccountID()
+	accountId := i.accountId
 	awscm := i.GetAWSClientMgr()
 	client, _ := awscm.Get(accountId, awsclientmgr.CONFIG)
 	configClient := client.(*configservice.Client)

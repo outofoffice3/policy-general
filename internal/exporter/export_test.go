@@ -48,7 +48,7 @@ func TestExporter(t *testing.T) {
 	// INSUFFICIENT DATA RESULT
 	err = exporter.AddEntry(shared.ComplianceEvaluation{
 		AccountId:    "",
-		ResourceType: shared.AWS_IAM_ROLE,
+		ResourceType: shared.AwsIamRole,
 		Arn:          "",
 		ComplianceResult: shared.ComplianceResult{
 			Compliance: types.ComplianceTypeInsufficientData,
@@ -63,7 +63,7 @@ func TestExporter(t *testing.T) {
 	// NON COMPLIANT RESULT
 	exporter.AddEntry(shared.ComplianceEvaluation{
 		AccountId:    "",
-		ResourceType: shared.AWS_IAM_ROLE,
+		ResourceType: shared.AwsIamRole,
 		Arn:          "",
 		ComplianceResult: shared.ComplianceResult{
 			Compliance: types.ComplianceTypeNonCompliant,
@@ -78,7 +78,7 @@ func TestExporter(t *testing.T) {
 	// COMPLIANT RESULT
 	exporter.AddEntry(shared.ComplianceEvaluation{
 		AccountId:    "",
-		ResourceType: shared.AWS_IAM_ROLE,
+		ResourceType: shared.AwsIamRole,
 		Arn:          "",
 		ComplianceResult: shared.ComplianceResult{
 			Compliance: types.ComplianceTypeCompliant,
@@ -96,7 +96,7 @@ func TestExporter(t *testing.T) {
 	file, err := os.Open("test.csv")
 	assertion.NoError(err, "should not be an error")
 
-	key, err := exporter.ExportToS3(shared.CONFIG_FILE_BUCKET_NAME)
+	key, err := exporter.ExportToS3(string(shared.ConfigFileBucketName))
 	assertion.NoError(err, "should not be an error")
 	assertion.NotEmpty(key, "should not be empty")
 

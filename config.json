@@ -1,0 +1,16 @@
+{
+    "awsAccounts": [
+      {
+        "accountId": "017608207428",
+        "roleName": "checkNoAccessPolicyGeneral2023"
+      }
+    ],
+    "restrictedActions": [
+      "s3:GetObject",
+      "s3:PutObject",
+      "ec2:DescribeInstances",
+      "lambda:InvokeFunction"
+    ],
+    "scope": "all"
+  }
+  

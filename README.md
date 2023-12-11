@@ -39,7 +39,6 @@ This solution enhances security and compliance by enforcing IAM policy restricti
 ### Project Structure 
 ```bash 
 |-- deployment/           # deployment files
-  |-- cdk-config-rule/    # cdk app for deploying aws config rule
   |-- sam-lambda/         # sam template for deploying lambda func  
 |-- handle/                    # event handler      
 |-- internal/                   # internal pkgs 

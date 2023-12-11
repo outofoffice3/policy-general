@@ -120,7 +120,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	e.Logger.Infof("Insufficient data entries written to [%s] ", shared.EXECUTION_LOG_FILE_NAME)
+	e.Logger.Infof("Insufficient data entries written to [%s] ", shared.ExecutionLogFileName)
 
 	// write non compliant entries
 	nonCompliantEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeNonCompliant))
@@ -130,7 +130,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	e.Logger.Infof("Non compliant entries written to [%s] ", shared.EXECUTION_LOG_FILE_NAME)
+	e.Logger.Infof("Non compliant entries written to [%s] ", shared.ExecutionLogFileName)
 
 	// write compliant entries
 	compliantEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeCompliant))
@@ -140,7 +140,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	e.Logger.Infof("Compliant entries written to [%s]", shared.EXECUTION_LOG_FILE_NAME)
+	e.Logger.Infof("Compliant entries written to [%s]", shared.ExecutionLogFileName)
 
 	return nil
 }
@@ -153,7 +153,7 @@ func (e *_Exporter) ExportToS3(bucket string) (string, error) {
 	defer file.Close()
 
 	timeNow := time.Now()
-	key := path.Join(timeNow.Format(time.RFC3339), shared.EXECUTION_LOG_FILE_NAME)
+	key := path.Join(timeNow.Format(time.RFC3339), string(shared.ExecutionLogFileName))
 	_, err = e.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -165,7 +165,7 @@ func (e *_Exporter) ExportToS3(bucket string) (string, error) {
 		return "", err
 	}
 
-	e.Logger.Infof("File uploaded to %s/%s\n", shared.CONFIG_FILE_BUCKET_NAME, shared.EXECUTION_LOG_FILE_NAME)
+	e.Logger.Infof("File uploaded to %s/%s\n", shared.ConfigFileBucketName, shared.ExecutionLogFileName)
 	return key, nil
 }
 

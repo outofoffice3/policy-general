@@ -57,7 +57,7 @@ func HandleConfigEvent(event shared.ConfigEvent, policyEvaluator iampolicyevalua
 	policyEvaluator.SendEvaluations(batchAwsConfigEvaluations)
 
 	// write results to csv
-	err := exporter.WriteToCSV(shared.EXECUTION_LOG_FILE_NAME)
+	err := exporter.WriteToCSV(string(shared.ExecutionLogFileName))
 	// return errors
 	if err != nil {
 		sos.Errorf("failed to write csv: %v", err)
@@ -66,7 +66,7 @@ func HandleConfigEvent(event shared.ConfigEvent, policyEvaluator iampolicyevalua
 	sos.Debugf("csv written")
 
 	// export csv file to S3 bucket
-	fileKey, err := exporter.ExportToS3(shared.CONFIG_FILE_BUCKET_NAME)
+	fileKey, err := exporter.ExportToS3(string(shared.ConfigFileBucketName))
 	if err != nil {
 		sos.Errorf("failed to write file to S3: %v", err)
 		return err

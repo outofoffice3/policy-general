@@ -54,11 +54,20 @@ func init() {
 		logger.Errorf("failed to load SDK config, %v", err)
 		panic("failed to load sdk config")
 	}
-	logger.Infof("SDK config loaded")
+	logger.Infof("SDK config loaded [%+v]", cfg)
 
 	// read env vars for config file location
-	configBucketName := os.Getenv(shared.CONFIG_FILE_BUCKET_NAME)
-	configObjKey := os.Getenv(shared.CONFIG_FILE_KEY)
+	configBucketName := os.Getenv(string(shared.EnvBucketName))
+	logger.Debugf("config bucket name : [%s]", configBucketName)
+	configObjKey := os.Getenv(string(shared.EnvConfigFileKey))
+	logger.Debugf("config object key : [%s]", configObjKey)
+	accountId := os.Getenv(string(shared.EnvAWSAccountID))
+	logger.Debugf("account id : [%s]", accountId)
+
+	if configBucketName == "" || configObjKey == "" || accountId == "" {
+		logger.Errorf("env vars not set")
+		panic("env vars not set")
+	}
 
 	// retrieve config file from s3
 	s3Client := s3.NewFromConfig(cfg)
@@ -103,5 +112,8 @@ func init() {
 	}
 	logger.Infof("config file parsed")
 
-	complianceEvaluator = iampolicyevaluator.Init(logger, config)
+	complianceEvaluator = iampolicyevaluator.Init(logger, shared.CheckNoAccessConfig{
+		Config:    config,
+		AccountId: accountId,
+	})
 }

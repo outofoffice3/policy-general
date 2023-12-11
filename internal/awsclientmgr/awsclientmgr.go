@@ -43,7 +43,7 @@ type _AWSClientMgr struct {
 	logger                  logger.Logger
 }
 
-func Init(sos logger.Logger, configfile shared.Config) AWSClientMgr {
+func Init(sos logger.Logger, configfile shared.CheckNoAccessConfig) AWSClientMgr {
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	// return errors
 	if err != nil {
@@ -56,14 +56,7 @@ func Init(sos logger.Logger, configfile shared.Config) AWSClientMgr {
 	}
 	sos.Debugf("init aws client")
 	awsclient := NewAWSClientMgr(sos)
-
-	accountId, err := GetAccountID()
-	// return errors
-	if err != nil {
-		sos.Errorf("failed to get account id: %s", err)
-		panic("failed to get account id: " + err.Error())
-	}
-	sos.Debugf("account id [%s]", accountId)
+	accountId := configfile.AccountId
 
 	// load iam, access analyzer, s3 & config clients for current account
 	iamClient := iam.NewFromConfig(cfg)
@@ -81,7 +74,7 @@ func Init(sos logger.Logger, configfile shared.Config) AWSClientMgr {
 
 	// load client maps with sdk clients
 	stsClient := sts.NewFromConfig(cfg)
-	for _, awsAccount := range configfile.AWSAccounts {
+	for _, awsAccount := range configfile.Config.AWSAccounts {
 		creds := stscreds.NewAssumeRoleProvider(stsClient, awsAccount.RoleName)
 		cfg.Credentials = aws.NewCredentialsCache(creds)
 		iamClient := iam.NewFromConfig(cfg)
@@ -163,23 +156,6 @@ func (a *_AWSClientMgr) Get(accountId string, serviceName AWSServiceName) (inter
 // get logger
 func (a *_AWSClientMgr) GetLogger() logger.Logger {
 	return a.logger
-}
-
-// get account id from sdk
-func GetAccountID() (string, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		return "", err
-	}
-
-	client := sts.NewFromConfig(cfg)
-
-	output, err := client.GetCallerIdentity(context.TODO(), &sts.GetCallerIdentityInput{})
-	if err != nil {
-		return "", err
-	}
-
-	return *output.Account, nil
 }
 
 // set bucket name

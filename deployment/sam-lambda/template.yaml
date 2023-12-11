@@ -26,7 +26,8 @@ Resources:
       Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
         Variables:
           CONFIG_FILE_BUCKET_NAME: policy-general-2023
-          CONFIG_FILE : config.json
+          CONFIG_FILE_KEY : config.json
+          AWS_ACCOUNT_ID : 033197602013
       Policies:
         Statement:
           - Sid: "CloudWatchLogs"
@@ -49,7 +50,7 @@ Resources:
             Action:
               - "s3:GetObject"
               - "s3:PutObject"
-            Resource: "arn:aws:s3:::your-specific-bucket-name/*"
+            Resource: "*"
 
           - Sid: "IAMActions"
             Effect: "Allow"
@@ -66,6 +67,25 @@ Resources:
               - "config:PutEvaluations"
               - "access-analyzer:CheckAccessNotGranted"
             Resource: "*"
+
+          - Sid: "GetCallerIdentity"
+            Effect: "Allow"
+            Action:
+              - "sts:GetCallerIdentity"
+            Resource: "*"
+  CustomConfigRule:
+    Type: 'AWS::Config::ConfigRule'
+    Properties:
+      ConfigRuleName: checkNoAccessPolicyGeneral2023
+      Description: Checks IAM identity policies for restricted actions. 
+      Source:
+        Owner: CUSTOM_LAMBDA
+        SourceIdentifier: !GetAtt AWSConfigRuleLambda.Arn
+        SourceDetails:
+          - EventSource: aws.config
+            MessageType: ScheduledNotification
+      InputParameters: {}  # You can specify input parameters if needed
+      MaximumExecutionFrequency: TwentyFour_Hours  # Adjust as needed
 
 Outputs:
   AWSConfigRuleLambda:

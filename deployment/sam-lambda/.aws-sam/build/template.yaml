@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'policy-general-2023
+
+  AWS SAM Template to deploy lambda function
+
+  '
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 256
+    Tracing: Active
+Resources:
+  AWSConfigRuleLambda:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: go1.x
+      SamResourceId: AWSConfigRuleLambda
+    Properties:
+      CodeUri: AWSConfigRuleLambda
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+      - arm64
+      Environment:
+        Variables:
+          CONFIG_FILE_BUCKET_NAME: policy-general-2023
+          CONFIG_FILE_KEY: config.json
+          AWS_STS_REGIONAL_ENDPOINTS: regional
+      Policies:
+        Statement:
+        - Sid: CloudWatchLogs
+          Effect: Allow
+          Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Resource: '*'
+        - Sid: XRay
+          Effect: Allow
+          Action:
+          - xray:PutTelemetryRecords
+          - xray:PutTraceSegments
+          Resource: '*'
+        - Sid: S3BucketAccess
+          Effect: Allow
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          Resource: '*'
+        - Sid: IAMActions
+          Effect: Allow
+          Action:
+          - iam:ListUsers
+          - iam:ListRoles
+          - iam:ListAttachedUserPolicies
+          - iam:ListAttachedRolePolicies
+          Resource: '*'
+        - Sid: ConfigAndAccessAnalyzer
+          Effect: Allow
+          Action:
+          - config:PutEvaluations
+          - access-analyzer:CheckAccessNotGranted
+          Resource: '*'
+        - Sid: GetCallerIdentity
+          Effect: Allow
+          Action:
+          - sts:GetCallerIdentity
+          Resource: '*'
+  CustomConfigRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: checkNoAccessPolicyGeneral2023
+      Description: Checks IAM identity policies for restricted actions.
+      Source:
+        Owner: CUSTOM_LAMBDA
+        SourceIdentifier:
+          Fn::GetAtt:
+          - AWSConfigRuleLambda
+          - Arn
+        SourceDetails:
+        - EventSource: aws.config
+          MessageType: ScheduledNotification
+      InputParameters: {}
+      MaximumExecutionFrequency: TwentyFour_Hours
+Outputs:
+  AWSConfigRuleLambda:
+    Description: Lambda function ARN
+    Value:
+      Fn::GetAtt:
+      - AWSConfigRuleLambda
+      - Arn

@@ -13,16 +13,14 @@ import (
 
 type AwsConfigCompliance string
 type ResourceType string
+type EnvVar string
+type S3BucketName string
+type S3ObjectKey string
 
-const (
-	COMPLIANT      AwsConfigCompliance = "COMPLIANT"
-	NON_COMPLIANT  AwsConfigCompliance = "NON_COMPLIANT"
-	NOT_APPLICABLE AwsConfigCompliance = "NOT_APPLICABLE"
-
-	AWS_IAM_ROLE  ResourceType = "AWS::IAM::ROLE"
-	AWS_IAM_USER  ResourceType = "AWS::IAM:USER"
-	NOT_SPECIFIED ResourceType = "NOT_SPECIFIED"
-)
+type CheckNoAccessConfig struct {
+	Config    Config
+	AccountId string
+}
 
 type ComplianceEvaluation struct {
 	AccountId        string           `json:"accountId"`
@@ -53,7 +51,7 @@ type ExecutionLogEntry struct {
 // Config represents the overall configuration structure.
 type Config struct {
 	AWSAccounts       []AWSAccount `json:"awsAccounts"`
-	RestrictedActions []string     `json:"actions"`
+	RestrictedActions []string     `json:"restrictedAction"`
 	Scope             string       `json:"scope"`
 }
 
