@@ -47,6 +47,15 @@ func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevalua
 			return err
 		}
 
+		// ##############################################
+		// CREATE AWS CONFIG EVALUATIONS BASED ON RESULT
+		// ##############################################
+
+		// if compliance type is INSUFFICIENT DATA, discard record
+		if result.ComplianceResult.Compliance == configServiceTypes.ComplianceTypeInsufficientData {
+			continue
+		}
+
 		awsConfigEvaluation := shared.CreateAWSConfigEvaluation(result)
 		batchAwsConfigEvaluations = append(batchAwsConfigEvaluations, awsConfigEvaluation)
 		currentIndex++
