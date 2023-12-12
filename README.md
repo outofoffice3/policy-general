@@ -67,9 +67,6 @@ Download and install Go from the [official website](https://go.dev/dl/).
 - **AWS SAM CLI**:
 Install AWS SAM CLI by following the [AWS SAM CLI Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
 
-- **AWS CDK**:
-Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_install).
-
 ### Resources required by user
 
 #### S3 Bucket
