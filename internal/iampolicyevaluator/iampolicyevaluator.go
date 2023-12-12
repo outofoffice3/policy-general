@@ -2,6 +2,7 @@ package iampolicyevaluator
 
 import (
 	"context"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -12,8 +13,8 @@ import (
 
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
-	"github.com/outofoffice3/common/logger"
 	"github.com/outofoffice3/policy-general/internal/awsclientmgr"
+	"github.com/outofoffice3/policy-general/internal/entrymgr"
 	"github.com/outofoffice3/policy-general/internal/exporter"
 	"github.com/outofoffice3/policy-general/internal/shared"
 )
@@ -45,8 +46,6 @@ type IAMPolicyEvaluator interface {
 	// GETTER & SETTER METHODS
 	// ###############################################################################################################
 
-	// get logger
-	GetLogger() logger.Logger
 	// get aws client mgr
 	GetAWSClientMgr() awsclientmgr.AWSClientMgr
 	// get exporter
@@ -71,44 +70,64 @@ type _IAMPolicyEvaluator struct {
 	scope             string
 	accountId         string
 	restrictedActions []string
-	logger            logger.Logger
 	results           chan shared.ComplianceEvaluation
 	awsClientMgr      awsclientmgr.AWSClientMgr
 	exporter          exporter.Exporter
 }
 
+type IAMPolicyEvaluatorInitConfig struct {
+	Cfg       aws.Config
+	Config    shared.Config
+	AccountId string
+}
+
 // returns an instance of iam policy evaluator
-func Init(sos logger.Logger, config shared.CheckNoAccessConfig) IAMPolicyEvaluator {
-	if sos == nil {
-		sos = logger.NewConsoleLogger(logger.LogLevelInfo)
-	}
-	awsClientMgr := awsclientmgr.Init(sos, config) // Init aws client mgr
-	exporter, err := exporter.Init(sos)            // Init exporter for sending execution log to s3
+func Init(config IAMPolicyEvaluatorInitConfig) IAMPolicyEvaluator {
+
+	// create entry mgr
+	entryMgr := entrymgr.Init()
+
+	// create aws client mgr
+	awsClientMgr := awsclientmgr.Init(awsclientmgr.AWSClientMgrInitConfig{
+		Cfg:       config.Cfg,
+		Config:    config.Config,
+		AccountId: config.AccountId,
+	})
+
+	// creeate exporter
+	exporter, err := exporter.Init(exporter.ExporterInitConfig{
+		AwsClientMgr: awsClientMgr,
+		EntryMgr:     entryMgr,
+		AccountId:    config.AccountId,
+	})
 	// return errors
 	if err != nil {
-		sos.Errorf("error initializing exporter : %v", err)
+		log.Printf("error initializing exporter : %v", err)
 		return nil
 	}
+
 	// create iam policy evaluator
 	iamPolicyEvaluator := NewIAMPolicyEvaluator(IAMPolicyEvaluatorInput{
-		wg:           &sync.WaitGroup{},
-		awsClientMgr: awsClientMgr,
-		exporter:     exporter,
-		logger:       sos,
-		accountID:    config.AccountId,
+		wg:                &sync.WaitGroup{},
+		awsClientMgr:      awsClientMgr,
+		exporter:          exporter,
+		accountID:         config.AccountId,
+		restrictedActions: config.Config.RestrictedActions,
+		scope:             config.Config.Scope,
 	})
-	sos.Debugf("iampolicyevaluator init success")
+	log.Println("iampolicyevaluator init success")
 	return iamPolicyEvaluator
 
 }
 
 // input to create a new iam policy evaluator
 type IAMPolicyEvaluatorInput struct {
-	wg           *sync.WaitGroup
-	awsClientMgr awsclientmgr.AWSClientMgr
-	exporter     exporter.Exporter
-	logger       logger.Logger
-	accountID    string
+	wg                *sync.WaitGroup
+	awsClientMgr      awsclientmgr.AWSClientMgr
+	exporter          exporter.Exporter
+	accountID         string
+	scope             string
+	restrictedActions []string
 }
 
 // creates a new iam policy evaluator
@@ -116,10 +135,9 @@ func NewIAMPolicyEvaluator(input IAMPolicyEvaluatorInput) IAMPolicyEvaluator {
 	return &_IAMPolicyEvaluator{
 		wg:                input.wg,
 		resultToken:       "",
-		scope:             "",
+		scope:             input.scope,
 		accountId:         input.accountID,
-		restrictedActions: nil,
-		logger:            input.logger,
+		restrictedActions: input.restrictedActions,
 		results:           make(chan shared.ComplianceEvaluation, 100),
 		awsClientMgr:      input.awsClientMgr,
 		exporter:          input.exporter,
@@ -135,9 +153,9 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 
 	// retrieve sdk iam and access analyzer clients
 	awscm := i.GetAWSClientMgr()
-	client, _ := awscm.Get(accountId, awsclientmgr.IAM)
+	client, _ := awscm.GetSDKClient(accountId, awsclientmgr.IAM)
 	iamClient := client.(*iam.Client)
-	aaClient, _ := awscm.Get(accountId, awsclientmgr.AA)
+	aaClient, _ := awscm.GetSDKClient(accountId, awsclientmgr.AA)
 	accessAnalyzerClient := aaClient.(*accessanalyzer.Client)
 
 	// list all policies for roles
@@ -146,7 +164,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 		listRolePage, err := listRolePaginator.NextPage(context.Background())
 		// check for errors
 		if err != nil {
-			i.logger.Errorf("error retrieving list of roles : %v", err)
+			log.Printf("error retrieving list of roles : [%v] \n", err)
 			complianceEvaluation := shared.ComplianceEvaluation{
 				AccountId:    accountId,
 				ResourceType: shared.NotSpecified,
@@ -168,7 +186,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 			return
 		}
 		for _, role := range listRolePage.Roles {
-			i.logger.Debugf("processing compliance check for role [%v]", *role.RoleName)
+			log.Printf("processing compliance check for role [%v]\n", *role.RoleName)
 			// loop through all policies attached to role and retrieve policy document
 			listRolePolicyPaginator := iam.NewListRolePoliciesPaginator(iamClient, &iam.ListRolePoliciesInput{
 				RoleName: role.RoleName,
@@ -177,7 +195,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 				listRolePoliciesPage, err := listRolePolicyPaginator.NextPage(context.Background())
 				// check for errors
 				if err != nil {
-					i.logger.Errorf("error retrieving list of policies for role [%v] : %v", *role.RoleName, err)
+					log.Printf("error retrieving list of policies for role [%v] : [%v] \n ", *role.RoleName, err)
 					complianceEvaluation := shared.ComplianceEvaluation{
 						AccountId:    accountId,
 						ResourceType: shared.AwsIamRole,
@@ -200,7 +218,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 				}
 				// loop through policy documents and check for compliance
 				for _, policyName := range listRolePoliciesPage.PolicyNames {
-					i.logger.Debugf("processing compliance check for policy [%v]", policyName)
+					log.Printf("processing compliance check for policy [%v]\n", policyName)
 					// retrieve policy document for policy
 					getPolicyDocumentOutput, err := iamClient.GetRolePolicy(context.Background(), &iam.GetRolePolicyInput{
 						PolicyName: aws.String(policyName),
@@ -208,7 +226,7 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 					})
 					// check for errors
 					if err != nil {
-						i.logger.Errorf("error retrieving policy document for policy [%v] : %v", policyName, err)
+						log.Printf("error retrieving policy document for policy [%v] : [%v]\n", policyName, err)
 						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
 							ResourceType: shared.AwsIamRole,
@@ -230,11 +248,12 @@ func (i *_IAMPolicyEvaluator) processRoleCompliance(restrictedActions []string, 
 						return
 					}
 					policyDocument := *getPolicyDocumentOutput.PolicyDocument
+					log.Printf("policy name [%v], policy document [%+s]\n", policyName, policyDocument)
 					// check if policy document is compliant
 					isCompliantResult, err := shared.IsCompliant(accessAnalyzerClient, policyDocument, restrictedActions)
 					// check for errors
 					if err != nil {
-						i.logger.Errorf("error checking compliance for policy [%v] : %v", policyName, err)
+						log.Printf("error checking compliance for policy [%v] : [%v]\n", policyName, err)
 						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
 							ResourceType: shared.AwsIamRole,
@@ -272,9 +291,9 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 
 	// retrieve sdk iam and access analyzer clients
 	awscm := i.GetAWSClientMgr()
-	client, _ := awscm.Get(accountId, awsclientmgr.IAM)
+	client, _ := awscm.GetSDKClient(accountId, awsclientmgr.IAM)
 	iamClient := client.(*iam.Client)
-	aaClient, _ := awscm.Get(accountId, awsclientmgr.AA)
+	aaClient, _ := awscm.GetSDKClient(accountId, awsclientmgr.AA)
 	accessAnalyzerClient := aaClient.(*accessanalyzer.Client)
 
 	// list all policies for users
@@ -283,7 +302,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 		listUserPage, err := listUserPaginator.NextPage(context.Background())
 		// check for errors
 		if err != nil {
-			i.logger.Errorf("error retrieving list of users : %v", err)
+			log.Printf("error retrieving list of users : [%v] \n", err)
 			complianceEvaluation := shared.ComplianceEvaluation{
 				AccountId:    accountId,
 				ResourceType: shared.NotSpecified,
@@ -305,7 +324,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 			return
 		}
 		for _, user := range listUserPage.Users {
-			i.logger.Debugf("processing compliance check for user [%v]", *user.UserName)
+			log.Printf("processing compliance check for user [%v]\n", *user.UserName)
 			// loop through all policies attached to user and retrieve policy document
 			listUserPolicyPaginator := iam.NewListUserPoliciesPaginator(iamClient, &iam.ListUserPoliciesInput{
 				UserName: user.UserName,
@@ -314,7 +333,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 				listUserPoliciesPage, err := listUserPolicyPaginator.NextPage(context.Background())
 				// check for errors
 				if err != nil {
-					i.logger.Errorf("error retrieving list of policies for user [%v] : %v", *user.UserName, err)
+					log.Printf("error retrieving list of policies for user [%v] : [%v]\n", *user.UserName, err)
 					complianceEvaluation := shared.ComplianceEvaluation{
 						AccountId:    accountId,
 						ResourceType: shared.AwsIamUser,
@@ -333,7 +352,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 					HandleError(processingErr, i)
 				}
 				for _, policyName := range listUserPoliciesPage.PolicyNames {
-					i.logger.Debugf("processing compliance check for policy [%v]", policyName)
+					log.Printf("processing compliance check for policy [%v]\n", policyName)
 					// retrieve policy document for policy
 					getPolicyDocumentOutput, err := iamClient.GetUserPolicy(context.Background(), &iam.GetUserPolicyInput{
 						PolicyName: aws.String(policyName),
@@ -341,7 +360,7 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 					})
 					// check for errors
 					if err != nil {
-						i.logger.Errorf("error retrieving policy document for policy [%v] : %v", policyName, err)
+						log.Printf("error retrieving policy document for policy [%v] : [%v]\n", policyName, err)
 						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
 							ResourceType: shared.AwsIamUser,
@@ -362,11 +381,12 @@ func (i *_IAMPolicyEvaluator) processUserCompliance(restrictedActions []string, 
 						return
 					}
 					policyDocument := *getPolicyDocumentOutput.PolicyDocument
+					log.Printf("policy name [%v], policy document [%s]\n", policyName, policyDocument)
 					// check if policy document is compliant
 					isCompliantResult, err := shared.IsCompliant(accessAnalyzerClient, policyDocument, restrictedActions)
 					// check for errors
 					if err != nil {
-						i.logger.Errorf("error checking compliance for policy [%v] : %v", policyName, err)
+						log.Printf("error checking compliance for policy [%v] : [%v]\n", policyName, err)
 						complianceEvaluation := shared.ComplianceEvaluation{
 							AccountId:    accountId,
 							ResourceType: shared.AwsIamUser,
@@ -407,11 +427,10 @@ func (i *_IAMPolicyEvaluator) processAllCompliance(restrictedActions []string, a
 
 // send evaluation to aws config
 func (i *_IAMPolicyEvaluator) SendEvaluations(evaluations []configServiceTypes.Evaluation) {
-	sos := i.GetLogger()
 	// retrieve sdk config client
 	accountId := i.accountId
 	awscm := i.GetAWSClientMgr()
-	client, _ := awscm.Get(accountId, awsclientmgr.CONFIG)
+	client, _ := awscm.GetSDKClient(accountId, awsclientmgr.CONFIG)
 	configClient := client.(*configservice.Client)
 
 	// send evaluations to aws config
@@ -422,14 +441,13 @@ func (i *_IAMPolicyEvaluator) SendEvaluations(evaluations []configServiceTypes.E
 	})
 	// check for errors
 	if err != nil {
-		sos.Errorf("error sending evaluations to aws config : %v", err)
+		log.Printf("error sending evaluations to aws config : [%v]\n", err)
 	}
 }
 
 // check no access
 func (i *_IAMPolicyEvaluator) CheckNoAccess(scope string, restrictedActions []string, accountId string, resultsBuffer chan shared.ComplianceEvaluation) error {
-	sos := i.GetLogger()
-	sos.Debugf("scope=%s, restrictedActions=%v, accountId=%s", scope, restrictedActions, accountId)
+	log.Printf("scope=%s, restrictedActions=%v, accountId=%s\n", scope, restrictedActions, accountId)
 	switch strings.ToLower(scope) {
 	case ROLES:
 		{
@@ -471,11 +489,6 @@ func (i *_IAMPolicyEvaluator) Wait() {
 // ###############################################################################################################
 // GETTER & SETTER METHODS
 // ###############################################################################################################
-
-// get logger
-func (i *_IAMPolicyEvaluator) GetLogger() logger.Logger {
-	return i.logger
-}
 
 // get aws client mgr
 func (i *_IAMPolicyEvaluator) GetAWSClientMgr() awsclientmgr.AWSClientMgr {

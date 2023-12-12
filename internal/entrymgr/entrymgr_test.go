@@ -4,8 +4,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	accessAnalyzerTypes "github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
 	"github.com/aws/aws-sdk-go-v2/service/configservice/types"
-	"github.com/outofoffice3/common/logger"
+	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
 	"github.com/outofoffice3/policy-general/internal/shared"
 	"github.com/stretchr/testify/assert"
 )
@@ -13,13 +15,13 @@ import (
 func TestEntryMgr(t *testing.T) {
 	assertion := assert.New(t)
 
-	em := Init(nil)
+	em := Init()
 	assertion.NotNil(em)
 
 	// ####################################
 	// CREATE NEW ENTRY MGR
 	// ####################################
-	em = Init(logger.NewConsoleLogger(logger.LogLevelDebug))
+	em = Init()
 	assertion.NotNil(em)
 
 	// ####################################
@@ -100,5 +102,29 @@ func TestEntryMgr(t *testing.T) {
 	entries, err = em.GetEntries(string("non-existent-type"))
 	assertion.Error(err)
 	assertion.Nil(entries)
+
+	evaluation := shared.ComplianceEvaluation{
+		AccountId:    "123",
+		ResourceType: shared.AwsIamRole,
+		Arn:          "123",
+		ComplianceResult: shared.ComplianceResult{
+			Compliance: configServiceTypes.ComplianceTypeInsufficientData,
+			Reasons: []accessAnalyzerTypes.ReasonSummary{
+				{
+					Description:    aws.String("123"),
+					StatementId:    aws.String("1"),
+					StatementIndex: aws.Int32(0),
+				},
+			},
+			Message: "test",
+		},
+	}
+	entryResult := CreateExecutionLogEntry(evaluation)
+	assertion.Equal("123", entryResult.AccountId)
+	assertion.Equal(string(shared.AwsIamRole), entryResult.ResourceType)
+	assertion.Equal("123", entryResult.Arn)
+	assertion.Equal(string(types.ComplianceTypeInsufficientData), entryResult.Compliance)
+	assertion.Equal("123", entryResult.Reasons)
+	assertion.Equal("test", entryResult.Message)
 
 }

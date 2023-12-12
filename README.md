@@ -81,12 +81,6 @@ Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aw
 
 1. For each accountId specified in the `config.json` file, you will need to create an IAM role that the lambda function can assume. Each role will require the following minimum permissions: 
 
-- iam:ListUsers
-- iam:ListRoles
-- iam:ListAttachedUserPolicies
-- iam:ListAttachedRolePolicies
-- access-analyzer:CheckAccessNotGranted
-
 ```json 
 {
   "Version": "2012-10-17",
@@ -96,9 +90,11 @@ Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aw
       "Effect": "Allow",
       "Action": [
         "iam:ListUsers",
+        "iam:ListUserPolicies",
+        "iam:GetRolePolicy",
         "iam:ListRoles",
-        "iam:ListAttachedUserPolicies",
-        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:GetUserPolicy",
         "access-analyzer:CheckAccessNotGranted"
       ],
       "Resource": "*"
@@ -106,6 +102,8 @@ Install AWS CDK by following the [AWS CDK Getting Started Guide](https://docs.aw
   ]
 }
 ```
+#### Trust Policy 
+
 To allow the lambda function execution role to assume this role via `sts:AssumeRole` create a trust policy on each role.
 
 For example, your `config.json` file might look like this:
@@ -131,8 +129,6 @@ For example, your `config.json` file might look like this:
   "scope": "all" // valid values = roles, user or all
 }
 ```
-
-#### Trust Policy 
 
 In this example, you would need to ensure that the IAM role's:
 - `arn:aws:iam::123456789101:role/your-role-name`
@@ -185,73 +181,68 @@ Please read each section below for more information about each created resource.
 
 Below are the permissions used for the lambda function execution role: 
 
-- logs:CreateLogGroup
-- logs:CreateLogStream
-- logs:PutLogEvents
-- xray:PutTelemetryRecords
-- xray:PutTraceSegments
-- s3:GetObject
-- s3:PutObject
-- iam:ListUsers
-- iam:ListRoles
-- iam:ListAttachedUserPolicies
-- iam:ListAttachedRolePolicies
-- config:PutEvaluations
-- access-analyzer:CheckAccessNotGranted
-
 ```json 
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "CloudWatchLogs",
-      "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "XRay",
-      "Effect": "Allow",
-      "Action": [
-        "xray:PutTelemetryRecords",
-        "xray:PutTraceSegments"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "S3BucketAccess",
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject"
-      ],
-      "Resource": "arn:aws:s3:::your-specific-bucket-name/*"
-    },
-    {
-      "Sid": "IAMActions",
-      "Effect": "Allow",
-      "Action": [
-        "iam:ListUsers",
-        "iam:ListRoles",
-        "iam:ListAttachedUserPolicies",
-        "iam:ListAttachedRolePolicies"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "ConfigAndAccessAnalyzer",
-      "Effect": "Allow",
-      "Action": [
-        "config:PutEvaluations",
-        "access-analyzer:CheckAccessNotGranted"
-      ],
-      "Resource": "*"
-    }
-  ]
+    "Statement": [
+        {
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "CloudWatchLogs"
+        },
+        {
+            "Action": [
+                "xray:PutTelemetryRecords",
+                "xray:PutTraceSegments"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "XRay"
+        },
+        {
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "S3BucketAccess"
+        },
+        {
+            "Action": [
+                "iam:ListUsers",
+                "iam:ListUserPolicies",
+                "iam:GetRolePolicy",
+                "iam:ListRoles",
+                "iam:ListRolePolicies",
+                "iam:GetUserPolicy"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "IAMActions"
+        },
+        {
+            "Action": [
+                "config:PutEvaluations",
+                "access-analyzer:CheckAccessNotGranted"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "ConfigAndAccessAnalyzer"
+        },
+        {
+            "Action": [
+                "sts:GetCallerIdentity"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "GetCallerIdentity"
+        }
+    ]
 }
 ```
 
@@ -297,7 +288,7 @@ Policy General is configured using a JSON file stored in S3. This configuration 
 // Config represents the overall configuration structure.
 type Config struct {
 	AWSAccounts       []AWSAccount `json:"awsAccounts"`
-	RestrictedActions []string     `json:"actions"`
+	RestrictedActions []string     `json:"restrictedActions"`
 	Scope             string       `json:"scope"`
 }
 
@@ -316,28 +307,12 @@ type AWSAccount struct {
 
 ### Execution 
 
-1. Receive cloudwatch event and serialize event.Details into **evalevents.ConfigEvent type**
-```go 
-type ConfigEvent struct {
-	Version          string `json:"version"`
-	InvokingEvent    string `json:"invokingEvent"`
-	RuleParameters   string `json:"ruleParameters"`
-	ResultToken      string `json:"resultToken"`
-	EventLeftScope   bool   `json:"eventLeftScope"`
-	ExecutionRoleArn string `json:"executionRoleArn"`
-	ConfigRuleArn    string `json:"configRuleArn"`
-	ConfigRuleName   string `json:"configRuleName"`
-	ConfigRuleID     string `json:"configRuleId"`
-	AccountID        string `json:"accountId"`
-	EvaluationMode   string `json:"evaluationMode"`
-}
-```
-2. For each AWS account Id, it will spawn a go routine and process the compliance of the IAM policies concurrently.
-3. Results will be sent on a buffered channel and published to AWS Config
+1. For each AWS account Id, it will spawn a go routine and process the compliance of the IAM policies concurrently.
+2. Results will be sent on a buffered channel and published to AWS Config
 
 ## How to Deploy (step by step)
 
-- [Readme for Policy General deployment](/deployment/README.md)
+- [Readme for Policy General deployment](./deployment/sam-lambda/README.md)
 
 ## License 
 

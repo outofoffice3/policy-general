@@ -3,18 +3,19 @@ package exporter
 import (
 	"context"
 	"encoding/csv"
+	"errors"
+	"log"
 	"os"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	accessAnalyzerTypes "github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/outofoffice3/common/logger"
+	"github.com/outofoffice3/policy-general/internal/awsclientmgr"
 	"github.com/outofoffice3/policy-general/internal/entrymgr"
 	"github.com/outofoffice3/policy-general/internal/shared"
 )
@@ -26,21 +27,23 @@ type Exporter interface {
 	ExportToS3(bucket string) (string, error)
 	// add entry
 	AddEntry(entry shared.ComplianceEvaluation) error
+	// delete file from s3
+	deleteFromS3(bucket string, key string) error
 }
 
 type _Exporter struct {
-	s3Client *s3.Client        // client for S3
-	entryMgr entrymgr.EntryMgr // manage execution log entries
-	filename string            // filename for execution log
-	Logger   logger.Logger     // logger
-
+	awsClientMgr awsclientmgr.AWSClientMgr // manage AWS clients
+	entryMgr     entrymgr.EntryMgr         // manage execution log entries
+	filename     string                    // filename for execution log
+	accountId    string
 }
 
-func Init(sos logger.Logger) (Exporter, error) {
-	em := entrymgr.Init(sos) // create entry mgr
-	e, err := newExporter(NewExporterInput{
-		entryMgr: em,
-		logger:   sos,
+func Init(config ExporterInitConfig) (Exporter, error) {
+	em := entrymgr.Init() // create entry mgr
+	e, err := newExporter(ExporterInitConfig{
+		EntryMgr:     em,
+		AwsClientMgr: config.AwsClientMgr,
+		AccountId:    config.AccountId,
 	})
 	// return errors
 	if err != nil {
@@ -49,30 +52,24 @@ func Init(sos logger.Logger) (Exporter, error) {
 	return e, nil
 }
 
-type NewExporterInput struct {
-	entryMgr entrymgr.EntryMgr
-	logger   logger.Logger
+type ExporterInitConfig struct {
+	AwsClientMgr awsclientmgr.AWSClientMgr
+	EntryMgr     entrymgr.EntryMgr
+	AccountId    string
 }
 
 // create new exporter
-func newExporter(input NewExporterInput) (Exporter, error) {
-	cfg, err := config.LoadDefaultConfig(context.Background())
-	if err != nil {
-		return nil, err
+func newExporter(input ExporterInitConfig) (Exporter, error) {
+	if input.AwsClientMgr == nil {
+		return nil, errors.New("aws client mgr not set")
 	}
-
-	s3Client := s3.NewFromConfig(cfg)
 	e := &_Exporter{
-		s3Client: s3Client,
-		entryMgr: input.entryMgr,
+		awsClientMgr: input.AwsClientMgr,
+		entryMgr:     input.EntryMgr,
+		accountId:    input.AccountId,
 	}
 
-	if input.logger != nil {
-		e.Logger = input.logger
-	}
-	e.Logger = logger.NewConsoleLogger(logger.LogLevelInfo)
-
-	e.Logger.Infof("exporter successfully created")
+	log.Println("exporter successfully created")
 	return e, nil
 }
 
@@ -97,7 +94,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	e.filename = filename
 	file, err := os.Create(filename)
 	if err != nil {
-		e.Logger.Errorf("failed to create file: [%s]", err)
+		log.Printf("failed to create file: [%s]\n", err)
 		return err
 	}
 	defer file.Close()
@@ -108,7 +105,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	// Writing header
 	header := []string{TIMESTAMP, COMPLIANCE, ARN, RESOURCE_TYPE, REASONS, MESSAGE, ERR_MSG, ACCOUNT_ID}
 	if err := writer.Write(header); err != nil {
-		e.Logger.Errorf("failed to write to file: [%s]", err)
+		log.Printf("failed to write to file: [%s]\n", err)
 		return err
 	}
 
@@ -120,7 +117,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	e.Logger.Infof("Insufficient data entries written to [%s] ", shared.ExecutionLogFileName)
+	log.Printf("Insufficient data entries written to [%s]\n", filename)
 
 	// write non compliant entries
 	nonCompliantEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeNonCompliant))
@@ -130,7 +127,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	e.Logger.Infof("Non compliant entries written to [%s] ", shared.ExecutionLogFileName)
+	log.Printf("Non compliant entries written to [%s]\n", filename)
 
 	// write compliant entries
 	compliantEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeCompliant))
@@ -140,32 +137,35 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 			return err
 		}
 	}
-	e.Logger.Infof("Compliant entries written to [%s]", shared.ExecutionLogFileName)
+	log.Printf("Compliant entries written to [%s]\n", filename)
 
 	return nil
 }
 
 func (e *_Exporter) ExportToS3(bucket string) (string, error) {
+	var client *s3.Client
 	file, err := os.Open(e.filename)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
-
+	clientResult, _ := e.awsClientMgr.GetSDKClient(e.accountId, awsclientmgr.S3)
+	client = clientResult.(*s3.Client)
 	timeNow := time.Now()
+
 	key := path.Join(timeNow.Format(time.RFC3339), string(shared.ExecutionLogFileName))
-	_, err = e.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+	_, err = client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 		Body:   file,
 	})
 
 	if err != nil {
-		e.Logger.Errorf("Error uploading to S3: [%s]", err)
+		log.Printf("Error uploading to S3: [%s]\n", err)
 		return "", err
 	}
 
-	e.Logger.Infof("File uploaded to %s/%s\n", shared.ConfigFileBucketName, shared.ExecutionLogFileName)
+	log.Printf("File uploaded to %s/%s\n", shared.ConfigFileBucketName, shared.ExecutionLogFileName)
 	return key, nil
 }
 
@@ -186,6 +186,24 @@ func CreateAWSConfigEvaluation(evaluation shared.ComplianceEvaluation) configSer
 		e.Annotation = aws.String(reasons)
 	}
 	return e
+}
+
+// delete file from s3
+func (e *_Exporter) deleteFromS3(bucket string, key string) error {
+	var client *s3.Client
+	clientResult, _ := e.awsClientMgr.GetSDKClient(e.accountId, awsclientmgr.S3)
+	client = clientResult.(*s3.Client)
+
+	_, err := client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		log.Printf("Error deleting file from S3: [%s]\n", err)
+		return err
+	}
+	log.Printf("File deleted from %s/%s\n", shared.ConfigFileBucketName, shared.ExecutionLogFileName)
+	return nil
 }
 
 func JoinReasons(reasons []accessAnalyzerTypes.ReasonSummary, separator string) string {

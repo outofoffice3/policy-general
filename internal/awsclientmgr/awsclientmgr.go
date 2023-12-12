@@ -1,35 +1,24 @@
 package awsclientmgr
 
 import (
-	"context"
+	"errors"
+	"log"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/accessanalyzer"
 	"github.com/aws/aws-sdk-go-v2/service/configservice"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/outofoffice3/common/logger"
 	"github.com/outofoffice3/policy-general/internal/shared"
 )
 
 type AWSClientMgr interface {
 	// set aws sdk client
-	Set(accountId string, name AWSServiceName, client interface{}) error
+	SetSDKClient(accountId string, name AWSServiceName, client interface{}) error
 	// get aws sdk client
-	Get(accountId string, name AWSServiceName) (interface{}, bool)
-	// get logger
-	GetLogger() logger.Logger
-	// set bucket name
-	setBucketName(bucketName string)
-	// get bucket name
-	getBucketName() string
-	// set config file key
-	setConfigObjKey(configObjKey string)
-	// get config file key
-	getConfigObjKey() string
+	GetSDKClient(accountId string, name AWSServiceName) (interface{}, bool)
 	// return client map
 	GetAccountIds() []string
 }
@@ -38,66 +27,71 @@ type _AWSClientMgr struct {
 	iamClientMap            map[string]*iam.Client
 	accessAnalyzerClientMap map[string]*accessanalyzer.Client
 	s3ClientMap             map[string]*s3.Client
-	bucketName              string
-	configObjKey            string
-	logger                  logger.Logger
 }
 
-func Init(sos logger.Logger, configfile shared.CheckNoAccessConfig) AWSClientMgr {
-	cfg, err := config.LoadDefaultConfig(context.Background())
-	// return errors
-	if err != nil {
-		sos.Errorf("failed to load aws config: %s", err)
-		panic("failed to load aws config: " + err.Error())
-	}
+type AWSClientMgrInitConfig struct {
+	Cfg       aws.Config
+	Config    shared.Config
+	AccountId string
+}
 
-	if sos == nil {
-		sos = logger.NewConsoleLogger(logger.LogLevelInfo)
-	}
-	sos.Debugf("init aws client")
-	awsclient := NewAWSClientMgr(sos)
-	accountId := configfile.AccountId
+func Init(pkgConfig AWSClientMgrInitConfig) AWSClientMgr {
+	cfg := pkgConfig.Cfg
+	log.Printf("init aws client")
+	awsclient := NewAWSClientMgr()
+	accountId := pkgConfig.AccountId
 
 	// load iam, access analyzer, s3 & config clients for current account
-	iamClient := iam.NewFromConfig(cfg)
-	awsclient.Set(accountId, IAM, iamClient)
-	sos.Debugf("iam client loaded")
-	aaClient := accessanalyzer.NewFromConfig(cfg)
-	awsclient.Set(accountId, AA, aaClient)
-	sos.Debugf("access analyzer client loaded")
-	s3Client := s3.NewFromConfig(cfg)
-	awsclient.Set(accountId, S3, s3Client)
-	sos.Debugf("s3 client loaded")
-	configClient := configservice.NewFromConfig(cfg)
-	awsclient.Set(accountId, CONFIG, configClient)
-	sos.Debugf("config client loaded")
+	sdkConfig := cfg.Copy()
+	iamClient := iam.NewFromConfig(sdkConfig)
+	awsclient.SetSDKClient(accountId, IAM, iamClient)
+	log.Printf("iam client loaded for account id [%v]", accountId)
+
+	aaClient := accessanalyzer.NewFromConfig(sdkConfig)
+	awsclient.SetSDKClient(accountId, AA, aaClient)
+	log.Printf("access analyzer client loaded for account id [%v]", accountId)
+
+	s3Client := s3.NewFromConfig(sdkConfig)
+	awsclient.SetSDKClient(accountId, S3, s3Client)
+	log.Printf("s3 client loaded for account id [%v]", accountId)
+
+	configClient := configservice.NewFromConfig(sdkConfig)
+	awsclient.SetSDKClient(accountId, CONFIG, configClient)
+	log.Printf("config client loaded with account id [%v]", accountId)
 
 	// load client maps with sdk clients
-	stsClient := sts.NewFromConfig(cfg)
-	for _, awsAccount := range configfile.Config.AWSAccounts {
+	stsClient := sts.NewFromConfig(sdkConfig)
+	for _, awsAccount := range pkgConfig.Config.AWSAccounts {
 		creds := stscreds.NewAssumeRoleProvider(stsClient, awsAccount.RoleName)
-		cfg.Credentials = aws.NewCredentialsCache(creds)
-		iamClient := iam.NewFromConfig(cfg)
-		awsclient.Set(awsAccount.AccountID, IAM, iamClient)
-		sos.Debugf("iam client added for account id [%s]", accountId)
-		aaClient := accessanalyzer.NewFromConfig(cfg)
-		awsclient.Set(awsAccount.AccountID, AA, aaClient)
-		sos.Debugf("access analyzer client added for account id [%s]", accountId)
+		log.Printf("assuming role [%s]", awsAccount.RoleName)
+
+		sdkConfig.Credentials = aws.NewCredentialsCache(creds)
+		iamClient := iam.NewFromConfig(sdkConfig)
+		awsclient.SetSDKClient(awsAccount.AccountID, IAM, iamClient)
+		log.Printf("iam client added for account id [%s]", awsAccount.AccountID)
+
+		sdkConfig.Credentials = aws.NewCredentialsCache(creds)
+		aaClient := accessanalyzer.NewFromConfig(sdkConfig)
+		awsclient.SetSDKClient(awsAccount.AccountID, AA, aaClient)
+		log.Printf("access analyzer client added for account id [%s]", awsAccount.AccountID)
 	}
 	return awsclient
 }
 
-func NewAWSClientMgr(sos logger.Logger) AWSClientMgr {
+func NewAWSClientMgr() AWSClientMgr {
 	return &_AWSClientMgr{
 		iamClientMap:            make(map[string]*iam.Client),
 		accessAnalyzerClientMap: make(map[string]*accessanalyzer.Client),
 		s3ClientMap:             make(map[string]*s3.Client),
-		logger:                  sos,
 	}
 }
 
 // set aws sdk client
-func (a *_AWSClientMgr) Set(accountId string, serviceName AWSServiceName, client interface{}) error {
+func (a *_AWSClientMgr) SetSDKClient(accountId string, serviceName AWSServiceName, client interface{}) error {
+	log.Printf("setting [%s] client for account id [%s]", serviceName, accountId)
+	if client == nil {
+		return errors.New("client is nil")
+	}
 	switch serviceName {
 	case IAM: // IAM - Identity and Access Management
 
@@ -119,16 +113,15 @@ func (a *_AWSClientMgr) Set(accountId string, serviceName AWSServiceName, client
 
 	default:
 		{
-
+			return errors.New("invalid service name")
 		}
 	}
 	return nil
 }
 
 // get aws sdk client
-func (a *_AWSClientMgr) Get(accountId string, serviceName AWSServiceName) (interface{}, bool) {
-	sos := a.GetLogger()
-	sos.Debugf("getting [%s] client for account id [%s]", serviceName, accountId)
+func (a *_AWSClientMgr) GetSDKClient(accountId string, serviceName AWSServiceName) (interface{}, bool) {
+	log.Printf("getting [%s] client for account id [%s]", serviceName, accountId)
 	switch serviceName {
 	case IAM: // IAM - Identity and Access Management
 		{
@@ -147,35 +140,10 @@ func (a *_AWSClientMgr) Get(accountId string, serviceName AWSServiceName) (inter
 		}
 	default:
 		{
-			sos.Debugf("default service name case")
+			log.Printf("default service name case")
 		}
 	}
 	return nil, false
-}
-
-// get logger
-func (a *_AWSClientMgr) GetLogger() logger.Logger {
-	return a.logger
-}
-
-// set bucket name
-func (a *_AWSClientMgr) setBucketName(bucketName string) {
-	a.bucketName = bucketName
-}
-
-// get bucket name
-func (a *_AWSClientMgr) getBucketName() string {
-	return a.bucketName
-}
-
-// set config file key
-func (a *_AWSClientMgr) setConfigObjKey(configObjKey string) {
-	a.configObjKey = configObjKey
-}
-
-// get config file key
-func (a *_AWSClientMgr) getConfigObjKey() string {
-	return a.configObjKey
 }
 
 // get account ids

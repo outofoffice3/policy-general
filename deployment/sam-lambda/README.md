@@ -1,4 +1,4 @@
-# Deploying Custom AWS Config Rule Lambda Function
+# Deploying Custom AWS Config Rule & Lambda Function
 
 UNDER DEVELOPMENT
 

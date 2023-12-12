@@ -12,4 +12,9 @@ const (
 	NotSpecified ResourceType = "not specified"
 	AwsIamRole   ResourceType = "AWS::IAM::Role"
 	AwsIamUser   ResourceType = "AWS::IAM::User"
+
+	UsEast1 AwsRegion = "us-east-1"
+	UsEast2 AwsRegion = "us-east-2"
+	UsWest1 AwsRegion = "us-west-1"
+	UsWest2 AwsRegion = "us-west-2"
 )

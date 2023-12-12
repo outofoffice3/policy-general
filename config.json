@@ -2,7 +2,7 @@
     "awsAccounts": [
       {
         "accountId": "017608207428",
-        "roleName": "checkNoAccessPolicyGeneral2023"
+        "roleName": "arn:aws:iam::017608207428:role/checkNoAccessPolicyGeneral2023"
       }
     ],
     "restrictedActions": [

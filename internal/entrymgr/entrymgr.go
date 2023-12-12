@@ -2,10 +2,10 @@ package entrymgr
 
 import (
 	"errors"
+	"log"
 	"time"
 
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
-	"github.com/outofoffice3/common/logger"
 	"github.com/outofoffice3/policy-general/internal/shared"
 )
 
@@ -15,34 +15,26 @@ type EntryMgr interface {
 	Add(entry shared.ExecutionLogEntry) error
 	// get entries
 	GetEntries(compliance string) ([]shared.ExecutionLogEntry, error)
-	// get logger
-	GetLogger() logger.Logger
 }
 
 type _EntryMgr struct {
 	insufficientData []shared.ExecutionLogEntry
 	compliant        []shared.ExecutionLogEntry
 	nonCompliant     []shared.ExecutionLogEntry
-	logger           logger.Logger
 }
 
-func Init(sos logger.Logger) EntryMgr {
-	em := newEntryMgr(sos)
-	log := em.GetLogger()
-	log.Infof("entry manager initialized")
+func Init() EntryMgr {
+	em := newEntryMgr()
+	log.Println("entry manager initialized")
 	return em
 }
 
 // create new entry manager
-func newEntryMgr(sos logger.Logger) EntryMgr {
-	if sos == nil {
-		sos = logger.NewConsoleLogger(logger.LogLevelInfo)
-	}
+func newEntryMgr() EntryMgr {
 	em := &_EntryMgr{
 		insufficientData: []shared.ExecutionLogEntry{},
 		compliant:        []shared.ExecutionLogEntry{},
 		nonCompliant:     []shared.ExecutionLogEntry{},
-		logger:           sos,
 	}
 	return em
 }
@@ -65,7 +57,7 @@ func (em *_EntryMgr) Add(entry shared.ExecutionLogEntry) error {
 		}
 	default:
 		{
-			em.logger.Errorf("unknown compliance type: [%s]", entry.Compliance)
+			log.Printf("unknown compliance type: [%s]\n", entry.Compliance)
 			return errors.New("unknown compliance type" + "[" + entry.Compliance + "]")
 		}
 	}
@@ -90,24 +82,23 @@ func (em *_EntryMgr) GetEntries(compliance string) ([]shared.ExecutionLogEntry, 
 		}
 	default:
 		{
-			em.logger.Errorf("unknown compliance type: [%s]", compliance)
+			log.Printf("unknown compliance type: [%s]\n", compliance)
 			return nil, errors.New("unknown compliance type" + "[" + compliance + "]")
 		}
 	}
 }
 
-// get logger
-func (em *_EntryMgr) GetLogger() logger.Logger {
-	return em.logger
-}
-
 func CreateExecutionLogEntry(evaluation shared.ComplianceEvaluation) shared.ExecutionLogEntry {
-	var entry shared.ExecutionLogEntry
-	entry.AccountId = evaluation.AccountId
-	entry.Arn = evaluation.Arn
-	entry.Compliance = string(evaluation.ComplianceResult.Compliance)
-	entry.ErrMsg = evaluation.ErrMsg
-	entry.ResourceType = string(evaluation.ResourceType)
-	entry.Timestamp = evaluation.Timestamp.Format(time.RFC3339)
+	reasons := shared.JoinReasons(evaluation.ComplianceResult.Reasons, ";")
+	entry := shared.ExecutionLogEntry{
+		AccountId:    evaluation.AccountId,
+		Arn:          evaluation.Arn,
+		ResourceType: string(evaluation.ResourceType),
+		Compliance:   string(evaluation.ComplianceResult.Compliance),
+		Reasons:      reasons,
+		Message:      evaluation.ComplianceResult.Message,
+		ErrMsg:       evaluation.ErrMsg,
+		Timestamp:    evaluation.Timestamp.Format(time.RFC3339),
+	}
 	return entry
 }

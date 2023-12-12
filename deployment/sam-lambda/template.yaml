@@ -27,7 +27,6 @@ Resources:
         Variables:
           CONFIG_FILE_BUCKET_NAME: policy-general-2023
           CONFIG_FILE_KEY : config.json
-          AWS_ACCOUNT_ID : 033197602013
       Policies:
         Statement:
           - Sid: "CloudWatchLogs"

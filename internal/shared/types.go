@@ -7,8 +7,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	accessAnalyzerTypes "github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
-
-	"github.com/aws/aws-sdk-go-v2/service/configservice/types"
 )
 
 type AwsConfigCompliance string
@@ -16,8 +14,10 @@ type ResourceType string
 type EnvVar string
 type S3BucketName string
 type S3ObjectKey string
+type AwsRegion string
 
 type CheckNoAccessConfig struct {
+	Cfg       aws.Config
 	Config    Config
 	AccountId string
 }
@@ -32,7 +32,7 @@ type ComplianceEvaluation struct {
 }
 
 type ComplianceResult struct {
-	Compliance types.ComplianceType                `json:"compliance"`
+	Compliance configServiceTypes.ComplianceType   `json:"compliance"`
 	Reasons    []accessAnalyzerTypes.ReasonSummary `json:"reasons"`
 	Message    string                              `json:"message"`
 }
@@ -51,7 +51,7 @@ type ExecutionLogEntry struct {
 // Config represents the overall configuration structure.
 type Config struct {
 	AWSAccounts       []AWSAccount `json:"awsAccounts"`
-	RestrictedActions []string     `json:"restrictedAction"`
+	RestrictedActions []string     `json:"restrictedActions"`
 	Scope             string       `json:"scope"`
 }
 
@@ -59,20 +59,6 @@ type Config struct {
 type AWSAccount struct {
 	AccountID string `json:"accountId"`
 	RoleName  string `json:"roleName"`
-}
-
-type ConfigEvent struct {
-	Version          string `json:"version"`
-	InvokingEvent    string `json:"invokingEvent"`
-	RuleParameters   string `json:"ruleParameters"`
-	ResultToken      string `json:"resultToken"`
-	EventLeftScope   bool   `json:"eventLeftScope"`
-	ExecutionRoleArn string `json:"executionRoleArn"`
-	ConfigRuleArn    string `json:"configRuleArn"`
-	ConfigRuleName   string `json:"configRuleName"`
-	ConfigRuleID     string `json:"configRuleId"`
-	AccountID        string `json:"accountId"`
-	EvaluationMode   string `json:"evaluationMode"`
 }
 
 func CreateAWSConfigEvaluation(evaluation ComplianceEvaluation) configServiceTypes.Evaluation {

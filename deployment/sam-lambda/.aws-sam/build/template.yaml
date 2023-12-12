@@ -26,7 +26,6 @@ Resources:
         Variables:
           CONFIG_FILE_BUCKET_NAME: policy-general-2023
           CONFIG_FILE_KEY: config.json
-          AWS_STS_REGIONAL_ENDPOINTS: regional
       Policies:
         Statement:
         - Sid: CloudWatchLogs
