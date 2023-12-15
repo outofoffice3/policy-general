@@ -24,6 +24,15 @@ var (
 func handler(ctx context.Context, event events.ConfigEvent) error {
 	// retrieve logger
 	log.Printf("aws config event : [%+v]\n", event)
+	// unmarshal invoking event from incoming event
+	var invokingEvent shared.InvokingEvent
+	err := json.Unmarshal([]byte(event.InvokingEvent), &invokingEvent)
+	// return errors
+	if err != nil {
+		log.Printf("failed to unmarshal invoking event: [%v]\n", err)
+		return err
+	}
+	log.Printf("invoking event : [%+v]\n", invokingEvent)
 
 	// ############################################################
 	// INITIALIZE IAM POLICY EVALUATOR INTERFACE
@@ -36,6 +45,7 @@ func handler(ctx context.Context, event events.ConfigEvent) error {
 	if err != nil {
 		panic("failed to load sdk config")
 	}
+	log.Printf("initial config : [%+v]", cfg)
 
 	// read env vars for config file location
 	configBucketName := os.Getenv(string(shared.EnvBucketName))
@@ -96,6 +106,7 @@ func handler(ctx context.Context, event events.ConfigEvent) error {
 
 	// ############################################################
 
+	log.Printf("input cfg for iampolicyevaluator : [%+v]", cfg)
 	complianceEvaluator = iampolicyevaluator.Init(iampolicyevaluator.IAMPolicyEvaluatorInitConfig{
 		Cfg:       cfg,
 		Config:    config,

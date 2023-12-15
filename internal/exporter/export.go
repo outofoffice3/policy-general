@@ -7,11 +7,9 @@ import (
 	"log"
 	"os"
 	"path"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	accessAnalyzerTypes "github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -26,7 +24,7 @@ type Exporter interface {
 	// export entries to AWS S3 bucket
 	ExportToS3(bucket string) (string, error)
 	// add entry
-	AddEntry(entry shared.ComplianceEvaluation) error
+	AddEntry(entry configServiceTypes.Evaluation) error
 	// delete file from s3
 	deleteFromS3(bucket string, key string) error
 }
@@ -74,19 +72,8 @@ func newExporter(input ExporterInitConfig) (Exporter, error) {
 }
 
 // add entry
-func (e *_Exporter) AddEntry(entry shared.ComplianceEvaluation) error {
-	executionLogEntry := shared.ExecutionLogEntry{
-		Timestamp:    entry.Timestamp.Format(time.RFC3339),
-		Compliance:   string(entry.ComplianceResult.Compliance),
-		Arn:          entry.Arn,
-		ResourceType: string(entry.ResourceType),
-		Reasons:      JoinReasons(entry.ComplianceResult.Reasons, ";"),
-		Message:      entry.ComplianceResult.Message,
-		ErrMsg:       entry.ErrMsg,
-		AccountId:    entry.AccountId,
-	}
-
-	return e.entryMgr.Add(executionLogEntry)
+func (e *_Exporter) AddEntry(entry configServiceTypes.Evaluation) error {
+	return e.entryMgr.AddEntry(entry)
 }
 
 // write entries to csv
@@ -103,7 +90,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	defer writer.Flush()
 
 	// Writing header
-	header := []string{TIMESTAMP, COMPLIANCE, ARN, RESOURCE_TYPE, REASONS, MESSAGE, ERR_MSG, ACCOUNT_ID}
+	header := []string{ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}
 	if err := writer.Write(header); err != nil {
 		log.Printf("failed to write to file: [%s]\n", err)
 		return err
@@ -113,17 +100,27 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	insufficientDataEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeInsufficientData))
 
 	for _, entry := range insufficientDataEntries {
-		if err := writer.Write([]string{entry.Timestamp, string(entry.Compliance), entry.Arn, entry.ResourceType, entry.Reasons, entry.Message, entry.ErrMsg, entry.AccountId}); err != nil {
+		if err := writer.Write([]string{*entry.ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
 			return err
 		}
 	}
 	log.Printf("Insufficient data entries written to [%s]\n", filename)
 
+	// write not applicable entries
+	notApplicableEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeNotApplicable))
+
+	for _, entry := range notApplicableEntries {
+		if err := writer.Write([]string{*entry.ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
+			return err
+		}
+	}
+	log.Printf("Not applicable entries written to [%s]\n", filename)
+
 	// write non compliant entries
 	nonCompliantEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeNonCompliant))
 
 	for _, entry := range nonCompliantEntries {
-		if err := writer.Write([]string{entry.Timestamp, string(entry.Compliance), entry.Arn, entry.ResourceType, entry.Reasons, entry.Message, entry.ErrMsg, entry.AccountId}); err != nil {
+		if err := writer.Write([]string{*entry.ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
 			return err
 		}
 	}
@@ -133,7 +130,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	compliantEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeCompliant))
 
 	for _, entry := range compliantEntries {
-		if err := writer.Write([]string{entry.Timestamp, string(entry.Compliance), entry.Arn, entry.ResourceType, entry.Reasons, entry.Message, entry.ErrMsg, entry.AccountId}); err != nil {
+		if err := writer.Write([]string{*entry.ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
 			return err
 		}
 	}
@@ -169,25 +166,6 @@ func (e *_Exporter) ExportToS3(bucket string) (string, error) {
 	return key, nil
 }
 
-func CreateAWSConfigEvaluation(evaluation shared.ComplianceEvaluation) configServiceTypes.Evaluation {
-	reasons := JoinReasons(evaluation.ComplianceResult.Reasons, ";")
-	e := configServiceTypes.Evaluation{
-		ComplianceResourceType: aws.String(string(evaluation.ResourceType)),
-		ComplianceResourceId:   aws.String(evaluation.Arn),
-		ComplianceType:         evaluation.ComplianceResult.Compliance,
-		OrderingTimestamp:      aws.Time(evaluation.Timestamp),
-	}
-	// if there was an error, set the annotation to the error message
-	if evaluation.ErrMsg != "" {
-		e.Annotation = aws.String(evaluation.ErrMsg)
-	}
-	// if there was a non-empty reason, set the annotation to the reason
-	if reasons != "" {
-		e.Annotation = aws.String(reasons)
-	}
-	return e
-}
-
 // delete file from s3
 func (e *_Exporter) deleteFromS3(bucket string, key string) error {
 	var client *s3.Client
@@ -204,13 +182,4 @@ func (e *_Exporter) deleteFromS3(bucket string, key string) error {
 	}
 	log.Printf("File deleted from %s/%s\n", shared.ConfigFileBucketName, shared.ExecutionLogFileName)
 	return nil
-}
-
-func JoinReasons(reasons []accessAnalyzerTypes.ReasonSummary, separator string) string {
-	var reasonsStrs []string
-	for _, reason := range reasons {
-		reasonsStrs = append(reasonsStrs, *reason.Description)
-		// You can include other fields from ReasonSummary if needed
-	}
-	return strings.Join(reasonsStrs, separator)
 }

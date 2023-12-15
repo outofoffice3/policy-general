@@ -1,6 +1,7 @@
 package awsclientmgr
 
 import (
+	"context"
 	"errors"
 	"log"
 
@@ -27,6 +28,7 @@ type _AWSClientMgr struct {
 	iamClientMap            map[string]*iam.Client
 	accessAnalyzerClientMap map[string]*accessanalyzer.Client
 	s3ClientMap             map[string]*s3.Client
+	configClientMap         map[string]*configservice.Client
 }
 
 type AWSClientMgrInitConfig struct {
@@ -35,47 +37,88 @@ type AWSClientMgrInitConfig struct {
 	AccountId string
 }
 
-func Init(pkgConfig AWSClientMgrInitConfig) AWSClientMgr {
+func Init(pkgConfig AWSClientMgrInitConfig) (AWSClientMgr, error) {
 	cfg := pkgConfig.Cfg
 	log.Printf("init aws client")
+	log.Printf("awsclientmgr pkg config: %v", cfg)
 	awsclient := NewAWSClientMgr()
 	accountId := pkgConfig.AccountId
 
 	// load iam, access analyzer, s3 & config clients for current account
 	sdkConfig := cfg.Copy()
+	log.Printf("sdk config : [%+v]\n", sdkConfig)
 	iamClient := iam.NewFromConfig(sdkConfig)
+	_, err := iamClient.ListRoles(context.Background(), &iam.ListRolesInput{})
+	if err != nil {
+		log.Printf("error loading iam client: %v", err)
+		return nil, errors.New("error loading iam client : [" + err.Error() + "]")
+	}
 	awsclient.SetSDKClient(accountId, IAM, iamClient)
-	log.Printf("iam client loaded for account id [%v]", accountId)
+	log.Printf("iam client loaded for account id [%v]\n", accountId)
 
 	aaClient := accessanalyzer.NewFromConfig(sdkConfig)
+	_, err = aaClient.ListAnalyzers(context.Background(), &accessanalyzer.ListAnalyzersInput{})
+	if err != nil {
+		log.Printf("error loading access analyzer client: %v", err)
+		return nil, errors.New("error loading access analyzer client : [" + err.Error() + "]")
+	}
 	awsclient.SetSDKClient(accountId, AA, aaClient)
-	log.Printf("access analyzer client loaded for account id [%v]", accountId)
+	log.Printf("access analyzer client loaded for account id [%v]\n", accountId)
 
 	s3Client := s3.NewFromConfig(sdkConfig)
+	_, err = s3Client.ListBuckets(context.Background(), &s3.ListBucketsInput{})
+	if err != nil {
+		log.Printf("error loading s3 client: %v", err)
+		return nil, errors.New("error loading s3 client : [" + err.Error() + "]")
+	}
 	awsclient.SetSDKClient(accountId, S3, s3Client)
-	log.Printf("s3 client loaded for account id [%v]", accountId)
+	log.Printf("s3 client loaded for account id [%v]\n", accountId)
 
 	configClient := configservice.NewFromConfig(sdkConfig)
+	_, err = configClient.DescribeConfigurationRecorders(context.Background(), &configservice.DescribeConfigurationRecordersInput{})
+	if err != nil {
+		log.Printf("error loading config client: %v", err)
+		return nil, errors.New("error loading config client : [" + err.Error() + "]")
+	}
 	awsclient.SetSDKClient(accountId, CONFIG, configClient)
-	log.Printf("config client loaded with account id [%v]", accountId)
+	log.Printf("config client loaded with account id [%v]\n", accountId)
 
 	// load client maps with sdk clients
-	stsClient := sts.NewFromConfig(sdkConfig)
 	for _, awsAccount := range pkgConfig.Config.AWSAccounts {
+		log.Printf("creating sdk client for account id [%v]\n", awsAccount)
+		stsClient := sts.NewFromConfig(sdkConfig)
+		output, err := stsClient.GetCallerIdentity(context.Background(), &sts.GetCallerIdentityInput{})
+		if err != nil {
+			log.Printf("error loading sts client: %v", err)
+			return nil, errors.New("error loading sts client : [" + err.Error() + "]")
+		}
+		log.Printf("caller identity: [%+v]\n", output)
 		creds := stscreds.NewAssumeRoleProvider(stsClient, awsAccount.RoleName)
 		log.Printf("assuming role [%s]", awsAccount.RoleName)
 
-		sdkConfig.Credentials = aws.NewCredentialsCache(creds)
-		iamClient := iam.NewFromConfig(sdkConfig)
+		cfgCopy := cfg.Copy()
+		cfgCopy.Credentials = aws.NewCredentialsCache(creds)
+		iamClient := iam.NewFromConfig(cfgCopy)
+		_, err = iamClient.ListRoles(context.Background(), &iam.ListRolesInput{})
+		if err != nil {
+			log.Printf("error assuming role [%s]: %v", awsAccount.RoleName, err)
+			return nil, errors.New("error assuming role : [" + err.Error() + "]")
+		}
+
 		awsclient.SetSDKClient(awsAccount.AccountID, IAM, iamClient)
 		log.Printf("iam client added for account id [%s]", awsAccount.AccountID)
 
-		sdkConfig.Credentials = aws.NewCredentialsCache(creds)
-		aaClient := accessanalyzer.NewFromConfig(sdkConfig)
+		aaClient := accessanalyzer.NewFromConfig(cfgCopy)
+		_, err = aaClient.ListAnalyzers(context.Background(), &accessanalyzer.ListAnalyzersInput{})
+		if err != nil {
+			log.Printf("error assuming role [%s]: %v", awsAccount.RoleName, err)
+			return nil, errors.New("error assuming role : [" + err.Error() + "]")
+		}
+
 		awsclient.SetSDKClient(awsAccount.AccountID, AA, aaClient)
 		log.Printf("access analyzer client added for account id [%s]", awsAccount.AccountID)
 	}
-	return awsclient
+	return awsclient, nil
 }
 
 func NewAWSClientMgr() AWSClientMgr {
@@ -83,6 +126,7 @@ func NewAWSClientMgr() AWSClientMgr {
 		iamClientMap:            make(map[string]*iam.Client),
 		accessAnalyzerClientMap: make(map[string]*accessanalyzer.Client),
 		s3ClientMap:             make(map[string]*s3.Client),
+		configClientMap:         make(map[string]*configservice.Client),
 	}
 }
 
@@ -110,6 +154,11 @@ func (a *_AWSClientMgr) SetSDKClient(accountId string, serviceName AWSServiceNam
 			clientAssert := client.(*s3.Client)
 			a.s3ClientMap[accountId] = clientAssert
 		}
+	case CONFIG: // CONFIG - AWS Config
+		{
+			clientAssert := client.(*configservice.Client)
+			a.configClientMap[accountId] = clientAssert
+		}
 
 	default:
 		{
@@ -136,6 +185,11 @@ func (a *_AWSClientMgr) GetSDKClient(accountId string, serviceName AWSServiceNam
 	case S3: // S3 - Simple Storage Service
 		{
 			client, ok := a.s3ClientMap[accountId]
+			return client, ok
+		}
+	case CONFIG:
+		{
+			client, ok := a.configClientMap[accountId]
 			return client, ok
 		}
 	default:

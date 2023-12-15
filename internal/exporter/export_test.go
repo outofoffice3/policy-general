@@ -9,8 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	accessTypes "github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
-	"github.com/aws/aws-sdk-go-v2/service/configservice/types"
+	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
 	"github.com/outofoffice3/policy-general/internal/awsclientmgr"
 	"github.com/outofoffice3/policy-general/internal/entrymgr"
 	"github.com/outofoffice3/policy-general/internal/shared"
@@ -51,7 +50,8 @@ func TestExporter(t *testing.T) {
 		Config:    config,
 		AccountId: accountId,
 	}
-	awscm := awsclientmgr.Init(awscmConfig)
+	awscm, err := awsclientmgr.Init(awscmConfig)
+	assertion.NoError(err, "should not be an error")
 	entryMgr := entrymgr.Init()
 	exporter, err := Init(ExporterInitConfig{
 		AwsClientMgr: awscm,
@@ -75,47 +75,29 @@ func TestExporter(t *testing.T) {
 	assertion.NotNil(exporter, "should not be nil")
 
 	// INSUFFICIENT DATA RESULT
-	err = exporter.AddEntry(shared.ComplianceEvaluation{
-		AccountId:    "",
-		ResourceType: shared.AwsIamRole,
-		Arn:          "",
-		ComplianceResult: shared.ComplianceResult{
-			Compliance: types.ComplianceTypeInsufficientData,
-			Reasons:    nil,
-			Message:    "",
-		},
-		ErrMsg:    "",
-		Timestamp: time.Now(),
+	err = exporter.AddEntry(configServiceTypes.Evaluation{
+		ComplianceType:       configServiceTypes.ComplianceTypeInsufficientData,
+		ComplianceResourceId: aws.String("insufficientDataEvaluationArn"),
+		Annotation:           aws.String(""),
+		OrderingTimestamp:    aws.Time(time.Now()),
 	})
 	assertion.NoError(err, "should not be an error")
 
 	// NON COMPLIANT RESULT
-	exporter.AddEntry(shared.ComplianceEvaluation{
-		AccountId:    "",
-		ResourceType: shared.AwsIamRole,
-		Arn:          "",
-		ComplianceResult: shared.ComplianceResult{
-			Compliance: types.ComplianceTypeNonCompliant,
-			Reasons:    nil,
-			Message:    "",
-		},
-		ErrMsg:    "",
-		Timestamp: time.Now(),
+	exporter.AddEntry(configServiceTypes.Evaluation{
+		ComplianceType:       configServiceTypes.ComplianceTypeNonCompliant,
+		ComplianceResourceId: aws.String("nonCompliantEvaulationArn"),
+		Annotation:           aws.String("noncompliant"),
+		OrderingTimestamp:    aws.Time(time.Now()),
 	})
 	assertion.NoError(err, "should not be an error")
 
 	// COMPLIANT RESULT
-	exporter.AddEntry(shared.ComplianceEvaluation{
-		AccountId:    "",
-		ResourceType: shared.AwsIamRole,
-		Arn:          "",
-		ComplianceResult: shared.ComplianceResult{
-			Compliance: types.ComplianceTypeCompliant,
-			Reasons:    nil,
-			Message:    "",
-		},
-		ErrMsg:    "",
-		Timestamp: time.Now(),
+	exporter.AddEntry(configServiceTypes.Evaluation{
+		ComplianceType:       configServiceTypes.ComplianceTypeCompliant,
+		ComplianceResourceId: aws.String("compliantEvaluationArn"),
+		Annotation:           aws.String("compliant"),
+		OrderingTimestamp:    aws.Time(time.Now()),
 	})
 	assertion.NoError(err, "should not be an error")
 
@@ -144,20 +126,5 @@ func TestExporter(t *testing.T) {
 	assertion.Empty(key, "should be empty")
 	err = exporter.deleteFromS3("non-existent-bucket", key)
 	assertion.Error(err, "should be an error")
-
-	joinReasonsResult := JoinReasons([]accessTypes.ReasonSummary{
-		{
-			Description:    aws.String("test-description"),
-			StatementId:    aws.String("test-statement-id"),
-			StatementIndex: aws.Int32(0),
-		},
-
-		{
-			Description:    aws.String("test-description2"),
-			StatementId:    aws.String("test-statement-id2"),
-			StatementIndex: aws.Int32(1),
-		},
-	}, ";")
-	assertion.Equal("test-description;test-description2", joinReasonsResult, "should be equal")
 
 }

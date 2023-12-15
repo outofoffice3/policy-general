@@ -2,6 +2,7 @@ package handle
 
 import (
 	"log"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
@@ -10,13 +11,16 @@ import (
 )
 
 func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevaluator.IAMPolicyEvaluator) error {
+
 	policyEvaluator.SetResultToken(event.ResultToken)
-	resultsBuffer := make(chan shared.ComplianceEvaluation, 100)
+	policyEvaluator.SetEventTime(time.Now())
+	resultsBuffer := make(chan configServiceTypes.Evaluation, 100)
 	awsclientmgr := policyEvaluator.GetAWSClientMgr()
 	scope := policyEvaluator.GetScope()
 	log.Printf("scope: [%s]\n", scope)
 	restrictedActions := policyEvaluator.GetRestrictedActions()
 	log.Printf("restrictedActions: [%v]\n", restrictedActions)
+	log.Printf("account Ids : [%v]", awsclientmgr.GetAccountIds())
 	for _, accountId := range awsclientmgr.GetAccountIds() {
 		policyEvaluator.IncrementWaitGroup(1)
 		go policyEvaluator.CheckNoAccess(scope, restrictedActions, accountId, resultsBuffer)
@@ -24,7 +28,7 @@ func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevalua
 	}
 
 	// close channel when all goroutines complete
-	go func(pe iampolicyevaluator.IAMPolicyEvaluator, results shared.ComplianceEvaluation) {
+	go func(pe iampolicyevaluator.IAMPolicyEvaluator, results configServiceTypes.Evaluation) {
 		pe.Wait()
 		close(resultsBuffer)
 		log.Printf("resultsBuffer closed")
@@ -36,8 +40,7 @@ func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevalua
 	exporter := policyEvaluator.GetExporter()
 	// process compliance evaluations
 	for result := range resultsBuffer {
-		policyEvaluator.DecrementWaitGroup()
-		log.Printf("result: [%v]\n", result)
+		log.Printf("result: [%v] [%v] [%v] [%v]", *result.ComplianceResourceId, *result.ComplianceResourceType, result.ComplianceType, *result.Annotation)
 
 		// add compliance evaulation to exporter
 		err := exporter.AddEntry(result)
@@ -52,22 +55,26 @@ func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevalua
 		// ##############################################
 
 		// if compliance type is INSUFFICIENT DATA, discard record
-		if result.ComplianceResult.Compliance == configServiceTypes.ComplianceTypeInsufficientData {
+		if result.ComplianceType == configServiceTypes.ComplianceTypeInsufficientData {
 			continue
 		}
 
-		awsConfigEvaluation := shared.CreateAWSConfigEvaluation(result)
-		batchAwsConfigEvaluations = append(batchAwsConfigEvaluations, awsConfigEvaluation)
+		batchAwsConfigEvaluations = append(batchAwsConfigEvaluations, result)
 		currentIndex++
 
 		if currentIndex == maxBatchSize {
-			policyEvaluator.SendEvaluations(batchAwsConfigEvaluations)
+			err := policyEvaluator.SendEvaluations(batchAwsConfigEvaluations, false)
+			// return errors
+			if err != nil {
+				log.Printf("failed to send evaluation to aws config: [%v]\n", err)
+				return err
+			}
 			currentIndex = 0
 			continue
 		}
 	}
 	// send remaining results to aws config
-	policyEvaluator.SendEvaluations(batchAwsConfigEvaluations)
+	policyEvaluator.SendEvaluations(batchAwsConfigEvaluations, false)
 
 	// write results to csv
 	err := exporter.WriteToCSV(string(shared.ExecutionLogFileName))

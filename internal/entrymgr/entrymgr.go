@@ -3,24 +3,23 @@ package entrymgr
 import (
 	"errors"
 	"log"
-	"time"
 
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
-	"github.com/outofoffice3/policy-general/internal/shared"
 )
 
 // EntryMgr stores & retrieves execution log entries for evaluator pkg
 type EntryMgr interface {
 	// add entry
-	Add(entry shared.ExecutionLogEntry) error
+	AddEntry(entry configServiceTypes.Evaluation) error
 	// get entries
-	GetEntries(compliance string) ([]shared.ExecutionLogEntry, error)
+	GetEntries(compliance string) ([]configServiceTypes.Evaluation, error)
 }
 
 type _EntryMgr struct {
-	insufficientData []shared.ExecutionLogEntry
-	compliant        []shared.ExecutionLogEntry
-	nonCompliant     []shared.ExecutionLogEntry
+	insufficientData []configServiceTypes.Evaluation
+	compliant        []configServiceTypes.Evaluation
+	nonCompliant     []configServiceTypes.Evaluation
+	notApplicable    []configServiceTypes.Evaluation
 }
 
 func Init() EntryMgr {
@@ -32,40 +31,46 @@ func Init() EntryMgr {
 // create new entry manager
 func newEntryMgr() EntryMgr {
 	em := &_EntryMgr{
-		insufficientData: []shared.ExecutionLogEntry{},
-		compliant:        []shared.ExecutionLogEntry{},
-		nonCompliant:     []shared.ExecutionLogEntry{},
+		insufficientData: []configServiceTypes.Evaluation{},
+		compliant:        []configServiceTypes.Evaluation{},
+		nonCompliant:     []configServiceTypes.Evaluation{},
+		notApplicable:    []configServiceTypes.Evaluation{},
 	}
 	return em
 }
 
 // add entry
-func (em *_EntryMgr) Add(entry shared.ExecutionLogEntry) error {
+func (em *_EntryMgr) AddEntry(entry configServiceTypes.Evaluation) error {
 	// based on compliance, add entry to corresponding slice
-	switch entry.Compliance {
-	case string(configServiceTypes.ComplianceTypeInsufficientData):
+	log.Printf("adding entry: [%+v]\n", entry)
+	switch entry.ComplianceType {
+	case configServiceTypes.ComplianceTypeInsufficientData:
 		{
 			em.insufficientData = append(em.insufficientData, entry)
 		}
-	case string(configServiceTypes.ComplianceTypeCompliant):
+	case configServiceTypes.ComplianceTypeCompliant:
 		{
 			em.compliant = append(em.compliant, entry)
 		}
-	case string(configServiceTypes.ComplianceTypeNonCompliant):
+	case configServiceTypes.ComplianceTypeNonCompliant:
 		{
 			em.nonCompliant = append(em.nonCompliant, entry)
 		}
+	case configServiceTypes.ComplianceTypeNotApplicable:
+		{
+			em.notApplicable = append(em.notApplicable, entry)
+		}
 	default:
 		{
-			log.Printf("unknown compliance type: [%s]\n", entry.Compliance)
-			return errors.New("unknown compliance type" + "[" + entry.Compliance + "]")
+			log.Printf("unknown compliance type: [%s]\n", string(entry.ComplianceType))
+			return errors.New("unknown compliance type" + "[" + string(entry.ComplianceType) + "]")
 		}
 	}
 	return nil
 }
 
 // get entries
-func (em *_EntryMgr) GetEntries(compliance string) ([]shared.ExecutionLogEntry, error) {
+func (em *_EntryMgr) GetEntries(compliance string) ([]configServiceTypes.Evaluation, error) {
 	// based on compliance, return corresponding slice
 	switch compliance {
 	case string(configServiceTypes.ComplianceTypeInsufficientData):
@@ -80,25 +85,14 @@ func (em *_EntryMgr) GetEntries(compliance string) ([]shared.ExecutionLogEntry, 
 		{
 			return em.nonCompliant, nil
 		}
+	case string(configServiceTypes.ComplianceTypeNotApplicable):
+		{
+			return em.notApplicable, nil
+		}
 	default:
 		{
 			log.Printf("unknown compliance type: [%s]\n", compliance)
 			return nil, errors.New("unknown compliance type" + "[" + compliance + "]")
 		}
 	}
-}
-
-func CreateExecutionLogEntry(evaluation shared.ComplianceEvaluation) shared.ExecutionLogEntry {
-	reasons := shared.JoinReasons(evaluation.ComplianceResult.Reasons, ";")
-	entry := shared.ExecutionLogEntry{
-		AccountId:    evaluation.AccountId,
-		Arn:          evaluation.Arn,
-		ResourceType: string(evaluation.ResourceType),
-		Compliance:   string(evaluation.ComplianceResult.Compliance),
-		Reasons:      reasons,
-		Message:      evaluation.ComplianceResult.Message,
-		ErrMsg:       evaluation.ErrMsg,
-		Timestamp:    evaluation.Timestamp.Format(time.RFC3339),
-	}
-	return entry
 }

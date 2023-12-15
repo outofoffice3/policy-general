@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"log"
 	"regexp"
 	"strings"
 
@@ -27,6 +28,7 @@ func IsValidScope(scope string) bool {
 }
 
 func IsCompliant(client *accessanalyzer.Client, policyDocument string, restrictedActions []string) (ComplianceResult, error) {
+	log.Printf("scanning document for restricted actions: [%v] \n", restrictedActions)
 	input := accessanalyzer.CheckAccessNotGrantedInput{
 		Access: []accessAnalyzerTypes.Access{
 			{

@@ -1,12 +1,10 @@
 package exporter
 
 const (
-	TIMESTAMP     string = "Timestamp"
-	COMPLIANCE    string = "Compliance"
-	ARN           string = "Arn"
-	RESOURCE_TYPE string = "ResourceType"
-	REASONS       string = "Reasons"
-	MESSAGE       string = "Message"
-	ERR_MSG       string = "ErrMsg"
-	ACCOUNT_ID    string = "AccountId"
+	ComplianceType       string = "ComplianceType"
+	ComplianceResourceId string = "ComplianceResourceId"
+	Annotation           string = "Annotation"
+	OrderingTimestamp    string = "OrderingTimestamp"
+
+	NoAllowRulesError string = "InvalidParameterException: You must include at least one allow statement for analysis"
 )

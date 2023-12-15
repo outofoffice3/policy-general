@@ -5,10 +5,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	accessAnalyzerTypes "github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
-	"github.com/aws/aws-sdk-go-v2/service/configservice/types"
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
-	"github.com/outofoffice3/policy-general/internal/shared"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,103 +25,77 @@ func TestEntryMgr(t *testing.T) {
 	// ADD TO ENTRY MGR
 	// ####################################
 
-	insufficientData := shared.ExecutionLogEntry{
-		AccountId:    "",
-		ResourceType: string(shared.AwsIamRole),
-		Compliance:   string(types.ComplianceTypeInsufficientData),
-		Reasons:      "",
-		Message:      "",
-		Arn:          "",
-		ErrMsg:       "",
-		Timestamp:    time.Now().Format(time.RFC3339),
+	insufficientData := configServiceTypes.Evaluation{
+		ComplianceType:       configServiceTypes.ComplianceTypeInsufficientData,
+		ComplianceResourceId: aws.String("insufficientDataEvaluationArn"),
+		Annotation:           aws.String(""),
+		OrderingTimestamp:    aws.Time(time.Now()),
 	}
-	err := em.Add(insufficientData)
+	err := em.AddEntry(insufficientData)
 	assertion.NoError(err)
 
-	nonCompliant := shared.ExecutionLogEntry{
-		AccountId:    "",
-		ResourceType: string(shared.AwsIamRole),
-		Compliance:   string(types.ComplianceTypeNonCompliant),
-		Reasons:      "",
-		Message:      "",
-		Arn:          "",
-		ErrMsg:       "",
-		Timestamp:    time.Now().Format(time.RFC3339),
+	nonCompliant := configServiceTypes.Evaluation{
+		ComplianceType:       configServiceTypes.ComplianceTypeNonCompliant,
+		ComplianceResourceId: aws.String("nonCompliantEvaulationArn"),
+		Annotation:           aws.String("noncompliant"),
+		OrderingTimestamp:    aws.Time(time.Now()),
 	}
-	err = em.Add(nonCompliant)
+	err = em.AddEntry(nonCompliant)
 	assertion.NoError(err)
 
-	compliant := shared.ExecutionLogEntry{
-		AccountId:    "",
-		ResourceType: string(shared.AwsIamRole),
-		Compliance:   string(types.ComplianceTypeCompliant),
-		Reasons:      "",
-		Message:      "",
-		Arn:          "",
-		ErrMsg:       "",
-		Timestamp:    time.Now().Format(time.RFC3339),
+	compliant := configServiceTypes.Evaluation{
+		ComplianceType:       configServiceTypes.ComplianceTypeCompliant,
+		ComplianceResourceId: aws.String("compliantEvaluationArn"),
+		Annotation:           aws.String("compliant"),
+		OrderingTimestamp:    aws.Time(time.Now()),
 	}
-	err = em.Add(compliant)
+	err = em.AddEntry(compliant)
 	assertion.NoError(err)
 
-	shouldThrowError := shared.ExecutionLogEntry{
-		AccountId:    "",
-		ResourceType: string(shared.AwsIamRole),
-		Compliance:   string("non-existent-type"),
-		Reasons:      "",
-		Message:      "",
-		Arn:          "",
-		ErrMsg:       "",
-		Timestamp:    time.Now().Format(time.RFC3339),
+	notApplicable := configServiceTypes.Evaluation{
+		ComplianceType:       configServiceTypes.ComplianceTypeNotApplicable,
+		ComplianceResourceId: aws.String("notApplicableEvaluationArn"),
+		Annotation:           aws.String("notApplicable"),
+		OrderingTimestamp:    aws.Time(time.Now()),
 	}
-	err = em.Add(shouldThrowError)
+	err = em.AddEntry(notApplicable)
+	assertion.NoError(err)
+
+	shouldThrowError := configServiceTypes.Evaluation{
+		ComplianceType:       configServiceTypes.ComplianceType("invalid compliance type"),
+		ComplianceResourceId: aws.String("shouldThrowErrorEvaluationArn"),
+		Annotation:           aws.String(""),
+		OrderingTimestamp:    aws.Time(time.Now()),
+	}
+	err = em.AddEntry(shouldThrowError)
 	assertion.NotNil(shouldThrowError)
 	assertion.Error(err)
 
 	// ####################################
 	// GET FROM ENTRY MGR
 	// ####################################
-	entries, err := em.GetEntries(string(types.ComplianceTypeInsufficientData))
+	entries, err := em.GetEntries(string(configServiceTypes.ComplianceTypeInsufficientData))
 	assertion.NoError(err)
 	assertion.Len(entries, 1)
 	assertion.Equal(insufficientData, entries[0])
 
-	entries, err = em.GetEntries(string(types.ComplianceTypeNonCompliant))
+	entries, err = em.GetEntries(string(configServiceTypes.ComplianceTypeNonCompliant))
 	assertion.NoError(err)
 	assertion.Len(entries, 1)
 	assertion.Equal(nonCompliant, entries[0])
 
-	entries, err = em.GetEntries(string(types.ComplianceTypeCompliant))
+	entries, err = em.GetEntries(string(configServiceTypes.ComplianceTypeCompliant))
 	assertion.NoError(err)
 	assertion.Len(entries, 1)
 	assertion.Equal(compliant, entries[0])
 
+	entries, err = em.GetEntries(string(configServiceTypes.ComplianceTypeNotApplicable))
+	assertion.NoError(err)
+	assertion.Len(entries, 1)
+	assertion.Equal(notApplicable, entries[0])
+
 	entries, err = em.GetEntries(string("non-existent-type"))
 	assertion.Error(err)
 	assertion.Nil(entries)
-
-	evaluation := shared.ComplianceEvaluation{
-		AccountId:    "123",
-		ResourceType: shared.AwsIamRole,
-		Arn:          "123",
-		ComplianceResult: shared.ComplianceResult{
-			Compliance: configServiceTypes.ComplianceTypeInsufficientData,
-			Reasons: []accessAnalyzerTypes.ReasonSummary{
-				{
-					Description:    aws.String("123"),
-					StatementId:    aws.String("1"),
-					StatementIndex: aws.Int32(0),
-				},
-			},
-			Message: "test",
-		},
-	}
-	entryResult := CreateExecutionLogEntry(evaluation)
-	assertion.Equal("123", entryResult.AccountId)
-	assertion.Equal(string(shared.AwsIamRole), entryResult.ResourceType)
-	assertion.Equal("123", entryResult.Arn)
-	assertion.Equal(string(types.ComplianceTypeInsufficientData), entryResult.Compliance)
-	assertion.Equal("123", entryResult.Reasons)
-	assertion.Equal("test", entryResult.Message)
 
 }

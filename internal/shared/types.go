@@ -1,8 +1,8 @@
 package shared
 
 import (
+	"log"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	accessAnalyzerTypes "github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
@@ -22,19 +22,18 @@ type CheckNoAccessConfig struct {
 	AccountId string
 }
 
-type ComplianceEvaluation struct {
-	AccountId        string           `json:"accountId"`
-	ResourceType     ResourceType     `json:"resoucetype"`
-	Arn              string           `json:"arn"`
-	ComplianceResult ComplianceResult `json:"complianceResult"`
-	ErrMsg           string           `json:"errMsg"`
-	Timestamp        time.Time        `json:"timestamp"`
+type InvokingEvent struct {
+	AWSAccountId             string `json:"awsAccountId"`
+	NotificationCreationTime string `json:"notificationCreationTime"`
+	MessageType              string `json:"messageType"`
+	RecordVersion            string `json:"recordVersion"`
 }
 
 type ComplianceResult struct {
-	Compliance configServiceTypes.ComplianceType   `json:"compliance"`
-	Reasons    []accessAnalyzerTypes.ReasonSummary `json:"reasons"`
-	Message    string                              `json:"message"`
+	Compliance         configServiceTypes.ComplianceType   `json:"compliance"`
+	Reasons            []accessAnalyzerTypes.ReasonSummary `json:"reasons"`
+	Message            string                              `json:"message"`
+	PolicyDocumentName string                              `json:"policyDocumentName"`
 }
 
 type ExecutionLogEntry struct {
@@ -61,30 +60,14 @@ type AWSAccount struct {
 	RoleName  string `json:"roleName"`
 }
 
-func CreateAWSConfigEvaluation(evaluation ComplianceEvaluation) configServiceTypes.Evaluation {
-	reasons := JoinReasons(evaluation.ComplianceResult.Reasons, ";")
-	e := configServiceTypes.Evaluation{
-		ComplianceResourceType: aws.String(string(evaluation.ResourceType)),
-		ComplianceResourceId:   aws.String(evaluation.Arn),
-		ComplianceType:         evaluation.ComplianceResult.Compliance,
-		OrderingTimestamp:      aws.Time(evaluation.Timestamp),
-	}
-	// if there was an error, set the annotation to the error message
-	if evaluation.ErrMsg != "" {
-		e.Annotation = aws.String(evaluation.ErrMsg)
-	}
-	// if there was a non-empty reason, set the annotation to the reason
-	if reasons != "" {
-		e.Annotation = aws.String(reasons)
-	}
-	return e
-}
-
 func JoinReasons(reasons []accessAnalyzerTypes.ReasonSummary, separator string) string {
 	var reasonsStrs []string
+	if reasons == nil {
+		log.Println("reasons null. returning empty strings")
+		return ""
+	}
 	for _, reason := range reasons {
 		reasonsStrs = append(reasonsStrs, *reason.Description)
-		// You can include other fields from ReasonSummary if needed
 	}
 	return strings.Join(reasonsStrs, separator)
 }

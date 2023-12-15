@@ -8,7 +8,7 @@ Description: >
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 60
+    Timeout: 600
     MemorySize: 256
 
     Tracing: Active
@@ -27,6 +27,7 @@ Resources:
         Variables:
           CONFIG_FILE_BUCKET_NAME: policy-general-2023
           CONFIG_FILE_KEY : config.json
+          AWS_STS_REGIONAL_ENDPOINTS: regional
       Policies:
         Statement:
           - Sid: "CloudWatchLogs"
@@ -49,29 +50,38 @@ Resources:
             Action:
               - "s3:GetObject"
               - "s3:PutObject"
+              - "s3:ListAllMyBuckets"
             Resource: "*"
 
-          - Sid: "IAMActions"
+          - Sid: "IAMSTSActions"
             Effect: "Allow"
             Action:
               - "iam:ListUsers"
+              - "iam:ListUserPolicies"
+              - "iam:GetUserPolicy"
               - "iam:ListRoles"
-              - "iam:ListAttachedUserPolicies"
-              - "iam:ListAttachedRolePolicies"
+              - "iam:ListRolePolicies"
+              - "iam:GetRolePolicy"
+              - "sts:AssumeRole"
+              - "sts:GetCallerIdentity"
             Resource: "*"
 
           - Sid: "ConfigAndAccessAnalyzer"
             Effect: "Allow"
             Action:
               - "config:PutEvaluations"
+              - "config:DescribeConfigurationRecorders"
               - "access-analyzer:CheckAccessNotGranted"
+              - "access-analyzer:ListAnalyzers"
             Resource: "*"
 
-          - Sid: "GetCallerIdentity"
-            Effect: "Allow"
-            Action:
-              - "sts:GetCallerIdentity"
-            Resource: "*"
+  LambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt AWSConfigRuleLambda.Arn
+      Principal: config.amazonaws.com
+
   CustomConfigRule:
     Type: 'AWS::Config::ConfigRule'
     Properties:
@@ -83,8 +93,7 @@ Resources:
         SourceDetails:
           - EventSource: aws.config
             MessageType: ScheduledNotification
-      InputParameters: {}  # You can specify input parameters if needed
-      MaximumExecutionFrequency: TwentyFour_Hours  # Adjust as needed
+      MaximumExecutionFrequency: TwentyFour_Hours
 
 Outputs:
   AWSConfigRuleLambda:

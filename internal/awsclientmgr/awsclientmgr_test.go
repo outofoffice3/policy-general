@@ -2,20 +2,39 @@ package awsclientmgr
 
 import (
 	"context"
-	"log"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/accessanalyzer"
+	"github.com/aws/aws-sdk-go-v2/service/configservice"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/outofoffice3/policy-general/internal/shared"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestAwsClientMgr(t *testing.T) {
 	assertion := assert.New(t)
-	cfg, _ := config.LoadDefaultConfig(context.Background())
+	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+		if service == sts.ServiceID {
+			return aws.Endpoint{
+				URL:           "https://sts.us-east-1.amazonaws.com", // Replace with your STS regional endpoint
+				SigningRegion: region,
+			}, nil
+		}
+		// Fallback to default resolution
+		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+	})
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithSharedConfigProfile("logadmin"),
+		config.WithRegion("us-east-1"),
+		config.WithEndpointResolverWithOptions(customResolver))
+	if err != nil {
+		panic("configuration error, " + err.Error())
+	}
+	assertion.NoError(err)
 
 	config := shared.Config{
 		AWSAccounts: []shared.AWSAccount{
@@ -34,38 +53,29 @@ func TestAwsClientMgr(t *testing.T) {
 	}
 
 	accountId := "033197602013"
-	awscm := Init(AWSClientMgrInitConfig{
+	awscm, err := Init(AWSClientMgrInitConfig{
 		Config:    config,
 		AccountId: accountId,
 		Cfg:       cfg,
 	})
+	assertion.NoError(err)
 	assertion.NotNil(awscm)
 
-	iamClient, ok := awscm.GetSDKClient(accountId, IAM)
-	assertion.True(ok)
-	assertion.NotNil(iamClient)
-	iamClientAssert, ok := iamClient.(*iam.Client)
-	assertion.True(ok)
-	assertion.IsType(&iam.Client{}, iamClientAssert)
+	for _, accountId := range awscm.GetAccountIds() {
+		iamClient, ok := awscm.GetSDKClient(accountId, IAM)
+		assertion.True(ok)
+		assertion.NotNil(iamClient)
+		iamClientAssert, ok := iamClient.(*iam.Client)
+		assertion.True(ok)
+		assertion.IsType(&iam.Client{}, iamClientAssert)
 
-	// test access
-	output, err := iamClientAssert.GetUser(context.Background(), &iam.GetUserInput{})
-	assertion.NoError(err)
-	assertion.NotNil(output)
-	log.Printf("%+v", output)
-
-	aaClient, ok := awscm.GetSDKClient(accountId, AA)
-	assertion.True(ok)
-	assertion.NotNil(aaClient)
-	aaClientAssert, ok := aaClient.(*accessanalyzer.Client)
-	assertion.True(ok)
-	assertion.IsType(&accessanalyzer.Client{}, aaClientAssert)
-
-	// test access
-	aaOutput, err := aaClientAssert.ListAnalyzers(context.Background(), &accessanalyzer.ListAnalyzersInput{})
-	assertion.NoError(err)
-	assertion.NotNil(aaOutput)
-	log.Printf("%+v", aaOutput)
+		aaClient, ok := awscm.GetSDKClient(accountId, AA)
+		assertion.True(ok)
+		assertion.NotNil(aaClient)
+		aaClientAssert, ok := aaClient.(*accessanalyzer.Client)
+		assertion.True(ok)
+		assertion.IsType(&accessanalyzer.Client{}, aaClientAssert)
+	}
 
 	s3Client, ok := awscm.GetSDKClient(accountId, S3)
 	assertion.True(ok)
@@ -73,6 +83,13 @@ func TestAwsClientMgr(t *testing.T) {
 	s3ClientAssert, ok := s3Client.(*s3.Client)
 	assertion.True(ok)
 	assertion.IsType(&s3.Client{}, s3ClientAssert)
+
+	configClient, ok := awscm.GetSDKClient(accountId, CONFIG)
+	assertion.True(ok)
+	assertion.NotNil(configClient)
+	configClientAssert, ok := configClient.(*configservice.Client)
+	assertion.True(ok)
+	assertion.IsType(&configservice.Client{}, configClientAssert)
 
 	accountIds := awscm.GetAccountIds()
 	assertion.Equal(2, len(accountIds))
