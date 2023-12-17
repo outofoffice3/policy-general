@@ -52,6 +52,7 @@ type Config struct {
 	AWSAccounts       []AWSAccount `json:"awsAccounts"`
 	RestrictedActions []string     `json:"restrictedActions"`
 	Scope             string       `json:"scope"`
+	TestMode          string       `json:"testMode"`
 }
 
 // AWSAccount represents an AWS account with its associated IAM role.

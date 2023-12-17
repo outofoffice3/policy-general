@@ -107,10 +107,13 @@ func handler(ctx context.Context, event events.ConfigEvent) error {
 	// ############################################################
 
 	log.Printf("input cfg for iampolicyevaluator : [%+v]", cfg)
+	ctxWithCancel, cancel := context.WithCancel(context.Background())
 	complianceEvaluator = iampolicyevaluator.Init(iampolicyevaluator.IAMPolicyEvaluatorInitConfig{
-		Cfg:       cfg,
-		Config:    config,
-		AccountId: event.AccountID,
+		Cfg:        cfg,
+		Config:     config,
+		AccountId:  event.AccountID,
+		Ctx:        ctxWithCancel,
+		CancelFunc: cancel,
 	})
 
 	// Handle config event & start service execution
@@ -118,7 +121,6 @@ func handler(ctx context.Context, event events.ConfigEvent) error {
 	if err != nil {
 		return err
 	}
-	complianceEvaluator.Wait() // wait for execution to complete
 
 	return nil
 }

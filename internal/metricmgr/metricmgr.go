@@ -45,6 +45,12 @@ func Init() MetricMgr {
 	totalFailedUserPolicies := int32(0)
 	metricMgr.setMetric(TotalFailedUserPolicies, &totalFailedUserPolicies)
 
+	// set evaluation metrics
+	totalEvaluations := int32(0)
+	metricMgr.setMetric(TotalEvaluations, &totalEvaluations)
+	totalFailedEvaluations := int32(0)
+	metricMgr.setMetric(TotalFailedEvaluations, &totalFailedEvaluations)
+
 	return metricMgr
 
 }

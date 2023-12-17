@@ -53,10 +53,13 @@ func TestAwsClientMgr(t *testing.T) {
 	}
 
 	accountId := "033197602013"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	awscm, err := Init(AWSClientMgrInitConfig{
 		Config:    config,
 		AccountId: accountId,
 		Cfg:       cfg,
+		Ctx:       ctx,
 	})
 	assertion.NoError(err)
 	assertion.NotNil(awscm)

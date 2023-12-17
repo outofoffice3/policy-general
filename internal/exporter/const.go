@@ -1,10 +1,20 @@
 package exporter
 
 const (
-	ComplianceType       string = "ComplianceType"
-	ComplianceResourceId string = "ComplianceResourceId"
-	Annotation           string = "Annotation"
-	OrderingTimestamp    string = "OrderingTimestamp"
+	ComplianceType       = "ComplianceType"
+	ComplianceResourceId = "ComplianceResourceId"
+	Annotation           = "Annotation"
+	OrderingTimestamp    = "OrderingTimestamp"
 
-	NoAllowRulesError string = "InvalidParameterException: You must include at least one allow statement for analysis"
+	AccountId          = "AccountId"
+	ResourceType       = "ResourceType"
+	PolicyDocumentName = "PolicyDocumentName"
+	Message            = "Message"
+
+	NoAllowRulesError = "InvalidParameterException: You must include at least one allow statement for analysis"
+)
+
+var (
+	EvaluationHeader = []string{ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}
+	ErrorHeader      = []string{AccountId, ResourceType, PolicyDocumentName, Message}
 )

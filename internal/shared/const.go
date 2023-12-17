@@ -1,9 +1,10 @@
 package shared
 
 const (
-	ConfigFileBucketName                 S3BucketName = "policy-general-2023"
-	CheckAccessNotGrantedonfigFileObjKey S3ObjectKey  = "config.json"
-	ExecutionLogFileName                 S3ObjectKey  = "checkNoAccess-aws-config.csv"
+	ConfigFileBucketName                  S3BucketName = "policy-general-2023"
+	CheckAccessNotGrantedConfigFileObjKey S3ObjectKey  = "config.json"
+	ExecutionLogFileName                  S3ObjectKey  = "checkAccessNotGranted-results.csv"
+	ErrorLogFileObjectKey                 S3ObjectKey  = "checkAccessNotGranted-errors.csv"
 
 	EnvBucketName    EnvVar = "CONFIG_FILE_BUCKET_NAME"
 	EnvConfigFileKey EnvVar = "CONFIG_FILE_KEY"

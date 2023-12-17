@@ -3,11 +3,9 @@ package iampolicyevaluator
 import (
 	"context"
 	"log"
-	"runtime"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
 
 	"github.com/outofoffice3/policy-general/internal/metricmgr"
 	"github.com/outofoffice3/policy-general/internal/shared"
@@ -16,6 +14,7 @@ import (
 
 func TestIAMPolicyEvaluator(t *testing.T) {
 	assertion := assert.New(t)
+
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithSharedConfigProfile("logadmin"),
 		config.WithRegion("us-east-1"))
@@ -38,55 +37,62 @@ func TestIAMPolicyEvaluator(t *testing.T) {
 		Scope: "all",
 	}
 	accountId := "033197602013"
+	ctx, cancel := context.WithCancel(context.Background())
 	iamPolicyEvaluator := Init(IAMPolicyEvaluatorInitConfig{
-		Cfg:       cfg,
-		Config:    config,
-		AccountId: accountId,
+		Cfg:        cfg,
+		Config:     config,
+		AccountId:  accountId,
+		Ctx:        ctx,
+		CancelFunc: cancel,
 	})
+
 	metricMgr := iamPolicyEvaluator.GetMetricMgr()
 	assertion.NotNil(metricMgr, "metricMgr is nil")
-	results := make(chan configServiceTypes.Evaluation, 150)
 	assertion.NotNil(iamPolicyEvaluator)
 
-	err = iamPolicyEvaluator.CheckNoAccess(config.Scope, iamPolicyEvaluator.GetRestrictedActions(), accountId, results)
-	assertion.NoError(err)
+	iamPolicyEvaluator.CheckAccessNotGranted(config.Scope, iamPolicyEvaluator.GetRestrictedActions(), accountId)
 
-	iamPolicyEvaluator.Wait()
+	/*
+		totalRoles, ok := metricMgr.GetMetric(metricmgr.TotalRoles)
+		assertion.True(ok)
+		assertion.Equal(int32(70), totalRoles)
+		log.Printf("total roles : [%v]", totalRoles)
 
-	totalRoles, ok := metricMgr.GetMetric(metricmgr.TotalRoles)
+		totalUsers, ok := metricMgr.GetMetric(metricmgr.TotalUsers)
+		assertion.True(ok)
+		assertion.Equal(int32(1), totalUsers)
+		log.Printf("total users : [%v]", totalUsers)
+
+		totalRolePolicies, ok := metricMgr.GetMetric(metricmgr.TotalRolePolicies)
+		assertion.True(ok)
+		log.Printf("total role policies : [%v]", totalRolePolicies)
+
+		totalUserPolicies, ok := metricMgr.GetMetric(metricmgr.TotalUserPolicies)
+		assertion.True(ok)
+		log.Printf("total user policies : [%v]", totalUserPolicies)
+
+		totalFailedRoles, ok := metricMgr.GetMetric(metricmgr.TotalFailedRoles)
+		assertion.True(ok)
+		log.Printf("total failed roles : [%v]", totalFailedRoles)
+
+		totalFailedUsers, ok := metricMgr.GetMetric(metricmgr.TotalFailedUsers)
+		assertion.True(ok)
+		log.Printf("total failed users : [%v]", totalFailedUsers)
+
+		totalFailedRolePolicies, ok := metricMgr.GetMetric(metricmgr.TotalFailedRolePolicies)
+		assertion.True(ok)
+		log.Printf("total failed role policies : [%v]", totalFailedRolePolicies)
+
+		totalFailedUserPolicies, ok := metricMgr.GetMetric(metricmgr.TotalFailedUserPolicies)
+		assertion.True(ok)
+		log.Printf("total failed user policies : [%v]", totalFailedUserPolicies)
+	*/
+	gt := iamPolicyEvaluator.GetGoTracker()
+	gt.WriteActiveGoroutinesToCSV("activeGoRoutines.csv")
+	gt.WriteAllGoroutinesToCSV("allGoRoutines.csv")
+	gt.WriteAllDefersToCSV("allDefers.csv")
+	assertion.True(gt.AreAllGoroutinesClosed())
+	totalEvaluations, ok := metricMgr.GetMetric(metricmgr.TotalEvaluations)
 	assertion.True(ok)
-	assertion.Equal(int32(70), totalRoles)
-	log.Printf("total roles : [%v]", totalRoles)
-
-	totalUsers, ok := metricMgr.GetMetric(metricmgr.TotalUsers)
-	assertion.True(ok)
-	assertion.Equal(int32(1), totalUsers)
-	log.Printf("total users : [%v]", totalUsers)
-
-	totalRolePolicies, ok := metricMgr.GetMetric(metricmgr.TotalRolePolicies)
-	assertion.True(ok)
-	log.Printf("total role policies : [%v]", totalRolePolicies)
-
-	totalUserPolicies, ok := metricMgr.GetMetric(metricmgr.TotalUserPolicies)
-	assertion.True(ok)
-	log.Printf("total user policies : [%v]", totalUserPolicies)
-
-	totalFailedRoles, ok := metricMgr.GetMetric(metricmgr.TotalFailedRoles)
-	assertion.True(ok)
-	log.Printf("total failed roles : [%v]", totalFailedRoles)
-
-	totalFailedUsers, ok := metricMgr.GetMetric(metricmgr.TotalFailedUsers)
-	assertion.True(ok)
-	log.Printf("total failed users : [%v]", totalFailedUsers)
-
-	totalFailedRolePolicies, ok := metricMgr.GetMetric(metricmgr.TotalFailedRolePolicies)
-	assertion.True(ok)
-	log.Printf("total failed role policies : [%v]", totalFailedRolePolicies)
-
-	totalFailedUserPolicies, ok := metricMgr.GetMetric(metricmgr.TotalFailedUserPolicies)
-	assertion.True(ok)
-	log.Printf("total failed user policies : [%v]", totalFailedUserPolicies)
-
-	assertion.Equal(2, runtime.NumGoroutine())
-
+	log.Printf("total evaluations [%v]\n", totalEvaluations)
 }

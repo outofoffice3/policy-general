@@ -107,7 +107,7 @@ func TestExporter(t *testing.T) {
 	file, err := os.Open("test.csv")
 	assertion.NoError(err, "should not be an error")
 
-	key, err := exporter.ExportToS3(string(shared.ConfigFileBucketName))
+	key, err := exporter.ExportToS3(string(shared.ConfigFileBucketName), "test.csv", "")
 	assertion.NoError(err, "should not be an error")
 	assertion.NotEmpty(key, "should not be empty")
 	err = exporter.deleteFromS3(string(shared.ConfigFileBucketName), key)
@@ -121,7 +121,7 @@ func TestExporter(t *testing.T) {
 	// ERRORS VALIDATION
 	// ####################################
 
-	key, err = exporter.ExportToS3("non-existent-bucket")
+	key, err = exporter.ExportToS3("non-existent-bucket", string(shared.CheckAccessNotGrantedConfigFileObjKey), "")
 	assertion.Error(err, "should be an error")
 	assertion.Empty(key, "should be empty")
 	err = exporter.deleteFromS3("non-existent-bucket", key)

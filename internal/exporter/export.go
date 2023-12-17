@@ -22,7 +22,7 @@ type Exporter interface {
 	// write to csv
 	WriteToCSV(filename string) error
 	// export entries to AWS S3 bucket
-	ExportToS3(bucket string) (string, error)
+	ExportToS3(bucket string, filename string, prefix string) (string, error)
 	// add entry
 	AddEntry(entry configServiceTypes.Evaluation) error
 	// delete file from s3
@@ -90,8 +90,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	defer writer.Flush()
 
 	// Writing header
-	header := []string{ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}
-	if err := writer.Write(header); err != nil {
+	if err := writer.Write([]string{ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
 		log.Printf("failed to write to file: [%s]\n", err)
 		return err
 	}
@@ -100,7 +99,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	insufficientDataEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeInsufficientData))
 
 	for _, entry := range insufficientDataEntries {
-		if err := writer.Write([]string{*entry.ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
+		if err := writer.Write([]string{*entry.ComplianceResourceId, string(entry.ComplianceType), *entry.Annotation, entry.OrderingTimestamp.Format(time.RFC3339)}); err != nil {
 			return err
 		}
 	}
@@ -110,7 +109,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	notApplicableEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeNotApplicable))
 
 	for _, entry := range notApplicableEntries {
-		if err := writer.Write([]string{*entry.ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
+		if err := writer.Write([]string{*entry.ComplianceResourceId, string(entry.ComplianceType), *entry.Annotation, entry.OrderingTimestamp.Format(time.RFC3339)}); err != nil {
 			return err
 		}
 	}
@@ -120,7 +119,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	nonCompliantEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeNonCompliant))
 
 	for _, entry := range nonCompliantEntries {
-		if err := writer.Write([]string{*entry.ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
+		if err := writer.Write([]string{*entry.ComplianceResourceId, string(entry.ComplianceType), *entry.Annotation, entry.OrderingTimestamp.Format(time.RFC3339)}); err != nil {
 			return err
 		}
 	}
@@ -130,7 +129,7 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	compliantEntries, _ := e.entryMgr.GetEntries(string(configServiceTypes.ComplianceTypeCompliant))
 
 	for _, entry := range compliantEntries {
-		if err := writer.Write([]string{*entry.ComplianceResourceId, ComplianceType, Annotation, OrderingTimestamp}); err != nil {
+		if err := writer.Write([]string{*entry.ComplianceResourceId, string(entry.ComplianceType), *entry.Annotation, entry.OrderingTimestamp.Format(time.RFC3339)}); err != nil {
 			return err
 		}
 	}
@@ -139,18 +138,17 @@ func (e *_Exporter) WriteToCSV(filename string) error {
 	return nil
 }
 
-func (e *_Exporter) ExportToS3(bucket string) (string, error) {
+func (e *_Exporter) ExportToS3(bucket, filename, prefix string) (string, error) {
 	var client *s3.Client
-	file, err := os.Open(e.filename)
+	file, err := os.Open(filename)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
 	clientResult, _ := e.awsClientMgr.GetSDKClient(e.accountId, awsclientmgr.S3)
 	client = clientResult.(*s3.Client)
-	timeNow := time.Now()
 
-	key := path.Join(timeNow.Format(time.RFC3339), string(shared.ExecutionLogFileName))
+	key := path.Join(prefix, filename)
 	_, err = client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),

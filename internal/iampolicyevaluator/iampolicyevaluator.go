@@ -17,7 +17,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/outofoffice3/policy-general/internal/awsclientmgr"
 	"github.com/outofoffice3/policy-general/internal/entrymgr"
+	"github.com/outofoffice3/policy-general/internal/errormgr"
 	"github.com/outofoffice3/policy-general/internal/exporter"
+	"github.com/outofoffice3/policy-general/internal/gotracker"
 	"github.com/outofoffice3/policy-general/internal/metricmgr"
 	"github.com/outofoffice3/policy-general/internal/shared"
 )
@@ -29,21 +31,10 @@ type IAMPolicyEvaluator interface {
 	// ###############################################################################################################
 
 	// check iam identity policies for restricted actions
-	CheckNoAccess(scope string, restrictedActions []string, accountId string, results chan configServiceTypes.Evaluation) error
-	// send compliance evaluation to AWS config
-	SendEvaluations(evaluations []configServiceTypes.Evaluation, testMode bool) error
-	// check if iam policy document contains restircted actions
+	CheckAccessNotGranted(scope string, restrictedActions []string, accountId string)
 
-	// ###############################################################################################################
-	// MANAGING WAIT GROUP METHODS
-	// ###############################################################################################################
-
-	// increment wait group
-	IncrementWaitGroup(value int)
-	// decrement wait group
-	DecrementWaitGroup()
-	// wait for evaluator to finish processing
-	Wait()
+	// add error
+	AddError(err error)
 
 	// ###############################################################################################################
 	// GETTER & SETTER METHODS
@@ -61,8 +52,6 @@ type IAMPolicyEvaluator interface {
 	SetScope(scope string)
 	// get scope
 	GetScope() string
-	// set restricted actions
-	SetRestrictedActions(restrictedActions []string)
 	// get restricted actions
 	GetRestrictedActions() []string
 	// set event time
@@ -71,30 +60,43 @@ type IAMPolicyEvaluator interface {
 	GetEventTime() time.Time
 	// get metric mgr
 	GetMetricMgr() metricmgr.MetricMgr
+	// get go tracker
+	GetGoTracker() gotracker.GoroutineTracker
+	// get context
+	GetContext() context.Context
+	// set testmode
+	SetTestMode(testMode string)
+	// get testmode
+	GetTestMode() bool
 }
 
 type _IAMPolicyEvaluator struct {
-	wg                *sync.WaitGroup
+	ctx               context.Context
+	cancelFunc        func()
 	resultToken       string
 	scope             string
 	accountId         string
 	restrictedActions []string
+	testMode          bool
+	errorLogChan      chan errormgr.Error
+	errorMgr          errormgr.ErrorMgr
 	eventTime         time.Time
-	results           chan configServiceTypes.Evaluation
 	awsClientMgr      awsclientmgr.AWSClientMgr
 	exporter          exporter.Exporter
 	metricMgr         metricmgr.MetricMgr
+	goTracker         gotracker.GoroutineTracker
 }
 
 type IAMPolicyEvaluatorInitConfig struct {
-	Cfg       aws.Config
-	Config    shared.Config
-	AccountId string
+	Cfg        aws.Config
+	Config     shared.Config
+	AccountId  string
+	Ctx        context.Context
+	CancelFunc func()
 }
 
 // returns an instance of iam policy evaluator
 func Init(config IAMPolicyEvaluatorInitConfig) IAMPolicyEvaluator {
-	log.Printf("cfg received by iampolicyevaluator init : [%+v]\n", config.Config)
 	// create entry mgr
 	entryMgr := entrymgr.Init()
 
@@ -103,6 +105,7 @@ func Init(config IAMPolicyEvaluatorInitConfig) IAMPolicyEvaluator {
 		Cfg:       config.Cfg,
 		Config:    config.Config,
 		AccountId: config.AccountId,
+		Ctx:       config.Ctx,
 	})
 	// return errors
 	if err != nil {
@@ -124,44 +127,60 @@ func Init(config IAMPolicyEvaluatorInitConfig) IAMPolicyEvaluator {
 
 	mm := metricmgr.Init()
 
+	gt := gotracker.NewTracker()
+
+	errorMgr := errormgr.New(errormgr.NewErrorMgrInput{
+		AwsClientMgr: awsClientMgr,
+		AccountId:    config.AccountId,
+	})
+
 	// create iam policy evaluator
 	iamPolicyEvaluator := NewIAMPolicyEvaluator(IAMPolicyEvaluatorInput{
-		wg:                &sync.WaitGroup{},
+		ctx:               config.Ctx,
+		cancelFunc:        config.CancelFunc,
 		awsClientMgr:      awsClientMgr,
 		exporter:          exporter,
 		accountID:         config.AccountId,
 		restrictedActions: config.Config.RestrictedActions,
 		scope:             config.Config.Scope,
 		metricMgr:         mm,
+		goTracker:         gt,
+		errorMgr:          errorMgr,
 	})
-	log.Println("iampolicyevaluator init success")
-	return iamPolicyEvaluator
 
+	iamPolicyEvaluator.SetTestMode(config.Config.TestMode)
+
+	return iamPolicyEvaluator
 }
 
 // input to create a new iam policy evaluator
 type IAMPolicyEvaluatorInput struct {
-	wg                *sync.WaitGroup
+	ctx               context.Context
+	cancelFunc        func()
 	awsClientMgr      awsclientmgr.AWSClientMgr
 	exporter          exporter.Exporter
 	accountID         string
 	scope             string
 	restrictedActions []string
 	metricMgr         metricmgr.MetricMgr
+	goTracker         gotracker.GoroutineTracker
+	errorMgr          errormgr.ErrorMgr
 }
 
 // creates a new iam policy evaluator
 func NewIAMPolicyEvaluator(input IAMPolicyEvaluatorInput) IAMPolicyEvaluator {
 	return &_IAMPolicyEvaluator{
-		wg:                input.wg,
-		resultToken:       "",
+		ctx:               input.ctx,
+		cancelFunc:        input.cancelFunc,
 		scope:             input.scope,
 		accountId:         input.accountID,
 		restrictedActions: input.restrictedActions,
-		results:           make(chan configServiceTypes.Evaluation, 150),
 		awsClientMgr:      input.awsClientMgr,
 		exporter:          input.exporter,
 		metricMgr:         input.metricMgr,
+		goTracker:         input.goTracker,
+		errorLogChan:      make(chan errormgr.Error, 5),
+		errorMgr:          input.errorMgr,
 	}
 }
 
@@ -169,17 +188,24 @@ func NewIAMPolicyEvaluator(input IAMPolicyEvaluatorInput) IAMPolicyEvaluator {
 // POLICY EVALUATION METHODS
 // ###############################################################################################################
 
-func processAccountRoleCompliance(restrictedActions []string, accountId string, resultsBuffer chan configServiceTypes.Evaluation, iamPolicyEvaluator IAMPolicyEvaluator) error {
-	defer iamPolicyEvaluator.DecrementWaitGroup()
+func processAccountRoleCompliance(wg *sync.WaitGroup, restrictedActions []string, accountId string, evalsBuff chan configServiceTypes.Evaluation, iamPolicyEvaluator IAMPolicyEvaluator) {
+	gt := iamPolicyEvaluator.GetGoTracker()
+	gt.TrackDeferCall("processAccountRoleCompliance", restrictedActions, accountId)
+	defer wg.Done()
 
-	var rolesWithError []string
 	metricMgr := iamPolicyEvaluator.GetMetricMgr()
+
 	// retrieve sdk iam and access analyzer clients
 	awscm := iamPolicyEvaluator.GetAWSClientMgr()
 	client, _ := awscm.GetSDKClient(accountId, awsclientmgr.IAM)
 	iamClient := client.(*iam.Client)
 	aaClient, _ := awscm.GetSDKClient(accountId, awsclientmgr.AA)
 	accessAnalyzerClient := aaClient.(*accessanalyzer.Client)
+
+	complianceResultsBuff := make(chan shared.ComplianceResult, 10) // buffer collect managed & inline policy results
+	finishSignal := make(chan finishSignal)                         // completion signal for inline policy scan
+	defer close(complianceResultsBuff)
+	defer close(finishSignal)
 
 	// list all policies for roles
 	listRolePaginator := iam.NewListRolesPaginator(iamClient, &iam.ListRolesInput{})
@@ -188,61 +214,75 @@ func processAccountRoleCompliance(restrictedActions []string, accountId string, 
 		// check for errors
 		if err != nil {
 			log.Printf("error retrieving list of roles : [%v] \n", err)
-			return err
+			iamPolicyEvaluator.AddError(errormgr.Error{
+				AccountId:          accountId,
+				ResourceType:       string(shared.AwsIamRole),
+				PolicyDocumentName: "",
+				Message:            err.Error(),
+			})
+			return
 		}
 		for _, role := range listRolePage.Roles {
+			log.Printf("processing role [%v] \n", *role.Arn)
 			metricMgr.IncrementMetric(metricmgr.TotalRoles, 1)
-			log.Printf("processing compliance check for role [%v]\n", *role.Arn)
-			err := processRoleCompliance(role, iamClient, accessAnalyzerClient, accountId, resultsBuffer, iamPolicyEvaluator)
-			if err != nil {
-				metricMgr.IncrementMetric(metricmgr.TotalFailedRoles, 1)
-				log.Printf("error processing compliance check for role [%v] : [%v]\n", *role.Arn, err.Error())
-				rolesWithError = append(rolesWithError, *role.Arn)
-				continue
-			}
+			processRoleCompliance(role, iamClient, accessAnalyzerClient, accountId, complianceResultsBuff, evalsBuff, finishSignal, iamPolicyEvaluator)
 		}
 	}
-	log.Printf("iam role compliance evaluations for account [%v] completed", accountId)
-	log.Printf("iam role with error : [%v]", rolesWithError)
-	return nil
 }
 
-func processRoleCompliance(role types.Role, iamClient *iam.Client, accessAnalzyerClient *accessanalyzer.Client, accountId string, resultsBuffer chan configServiceTypes.Evaluation, iamPolicyEvaluator IAMPolicyEvaluator) error {
+type finishSignal struct{}
+
+func processRoleCompliance(role types.Role, iamClient *iam.Client, accessAnalzyerClient *accessanalyzer.Client, accountId string, complianceResultsBuff chan shared.ComplianceResult, evalsBuff chan configServiceTypes.Evaluation, signal chan finishSignal, iamPolicyEvaluator IAMPolicyEvaluator) {
+	gt := iamPolicyEvaluator.GetGoTracker()
 	var (
 		complianceResults []shared.ComplianceResult
 	)
-	iamPolicyEvaluator.IncrementWaitGroup(2)
-	complianceResultsChannel := make(chan shared.ComplianceResult, 100)
 
 	// process managed policies and inline policies concurrently
 	roleWg := &sync.WaitGroup{}
 	roleWg.Add(2)
-	go processRoleManagedPolicyCompliance(roleWg, role, iamClient, accessAnalzyerClient, accountId, complianceResultsChannel, iamPolicyEvaluator)
-	go processRoleInlinePolicyCompliance(roleWg, role, iamClient, accessAnalzyerClient, accountId, complianceResultsChannel, iamPolicyEvaluator)
+	gt.TrackGoroutine("processRoleManagedPolicyCompliance", *role.Arn, accountId)
+	go processRoleManagedPolicyCompliance(roleWg, role, iamClient, accessAnalzyerClient, accountId, complianceResultsBuff, iamPolicyEvaluator)
+	gt.TrackGoroutine("processRoleInlinePolicyCompliance", *role.Arn, accountId)
+	go processRoleInlinePolicyCompliance(roleWg, role, iamClient, accessAnalzyerClient, accountId, complianceResultsBuff, iamPolicyEvaluator)
 
-	// close channel when go routines complete
-	go func(roleWg *sync.WaitGroup) {
+	go func() {
 		roleWg.Wait()
-		close(complianceResultsChannel)
-	}(roleWg)
+		log.Printf("role compliance evaluation completed for [%v]\n", *role.Arn)
+		signal <- finishSignal{} // send finish signal to terminate for loop
+	}()
 
-	// read from channel, covert to aws config evaluation and send on results buffer channel
-	for result := range complianceResultsChannel {
-		complianceResults = append(complianceResults, result)
+Loop:
+	for {
+		select {
+		case result, ok := <-complianceResultsBuff:
+			{
+				if !ok {
+					log.Printf("complianceResultsBuff closed for [%v]\n", shared.AwsIamRole)
+					return
+				}
+				// append results from both channels
+				complianceResults = append(complianceResults, result)
+				log.Printf("compliance results received for [%v] [%v]\n", *role.Arn, result.Compliance)
+			}
+		case <-signal:
+			{
+				break Loop
+			}
+		}
 	}
 
-	awsConfigEval := createAWSConfigEvaluation(shared.AwsIamRole, *role.Arn, iamPolicyEvaluator.GetEventTime(), complianceResults)
-	resultsBuffer <- awsConfigEval
-	log.Printf("iam role compliance evaluation for role [%v] completed : [%v] [%v] [%v] [%v] [%v]", *role.Arn,
-		*awsConfigEval.ComplianceResourceId, *awsConfigEval.ComplianceResourceType, awsConfigEval.ComplianceType,
-		*awsConfigEval.OrderingTimestamp, *awsConfigEval.Annotation)
-	return nil
+	// create an aws config evaluation from the aggregated compliance results
+	awsConfigEvaluation := createAWSConfigEvaluation(shared.AwsIamRole, *role.Arn, iamPolicyEvaluator.GetEventTime(), complianceResults)
+	evalsBuff <- awsConfigEvaluation
+	log.Printf("evaluated role [%v] as [%v]", *awsConfigEvaluation.ComplianceResourceId, awsConfigEvaluation.ComplianceType)
 }
 
-func processAccountUserCompliance(restrictedActions []string, accountId string, resultsBuffer chan configServiceTypes.Evaluation, iamPolicyEvaluator IAMPolicyEvaluator) error {
-	defer iamPolicyEvaluator.DecrementWaitGroup()
+func processAccountUserCompliance(wg *sync.WaitGroup, restrictedActions []string, accountId string, evalsBuff chan configServiceTypes.Evaluation, iamPolicyEvaluator IAMPolicyEvaluator) {
+	gt := iamPolicyEvaluator.GetGoTracker()
+	gt.TrackDeferCall("processAccountUserCompliance", restrictedActions, accountId)
+	defer wg.Done()
 
-	var usersWithError []string
 	metricMgr := iamPolicyEvaluator.GetMetricMgr()
 	// retrieve sdk iam and access analyzer clients
 	awscm := iamPolicyEvaluator.GetAWSClientMgr()
@@ -250,6 +290,10 @@ func processAccountUserCompliance(restrictedActions []string, accountId string, 
 	iamClient := client.(*iam.Client)
 	aaClient, _ := awscm.GetSDKClient(accountId, awsclientmgr.AA)
 	accessAnalyzerClient := aaClient.(*accessanalyzer.Client)
+	complianceResultsBuff := make(chan shared.ComplianceResult, 10)
+	finishSignal := make(chan finishSignal)
+	defer close(complianceResultsBuff)
+	defer close(finishSignal)
 
 	// list all policies for users
 	listUserPaginator := iam.NewListUsersPaginator(iamClient, &iam.ListUsersInput{})
@@ -258,59 +302,70 @@ func processAccountUserCompliance(restrictedActions []string, accountId string, 
 		// check for errors
 		if err != nil {
 			log.Printf("error retrieving list of users : [%v] \n", err)
-			return err
+			iamPolicyEvaluator.AddError(errormgr.Error{
+				AccountId:          accountId,
+				ResourceType:       string(shared.AwsIamUser),
+				PolicyDocumentName: "",
+				Message:            err.Error(),
+			})
+			return
 		}
 		for _, user := range listUserPage.Users {
 			metricMgr.IncrementMetric(metricmgr.TotalUsers, 1)
-			log.Printf("processing compliance check for user [%v]\n", *user.Arn)
-			err := processUserCompliance(user, iamClient, accessAnalyzerClient, accountId, resultsBuffer, iamPolicyEvaluator)
-			if err != nil {
-				metricMgr.IncrementMetric(metricmgr.TotalFailedUsers, 1)
-				log.Printf("error processing compliance check for user [%v] : [%v]\n", *user.Arn, err.Error())
-				usersWithError = append(usersWithError, *user.Arn)
-				continue
-			}
+			log.Printf("processing user [%v] \n", *user.Arn)
+			processUserCompliance(user, iamClient, accessAnalyzerClient, accountId, complianceResultsBuff, evalsBuff, finishSignal, iamPolicyEvaluator)
 		}
 	}
-	log.Printf("iam user compliance evaluations for account [%v] completed", accountId)
-	log.Printf("iam user with error : [%v]", usersWithError)
-	return nil
 }
 
-func processUserCompliance(user types.User, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, resultsBuffer chan configServiceTypes.Evaluation, iamPolicyEvaluator IAMPolicyEvaluator) error {
+func processUserCompliance(user types.User, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, complianceResultsBuff chan shared.ComplianceResult, evalsBuff chan configServiceTypes.Evaluation, signal chan finishSignal, iamPolicyEvaluator IAMPolicyEvaluator) {
+	gt := iamPolicyEvaluator.GetGoTracker()
 	var (
 		complianceResults []shared.ComplianceResult
 	)
-	iamPolicyEvaluator.IncrementWaitGroup(2)
-	complianceResultsChannel := make(chan shared.ComplianceResult, 150)
 
 	// process managed policies and inline policies concurrently
 	userWg := &sync.WaitGroup{}
 	userWg.Add(2)
-	go processUserManagedPolicyCompliance(userWg, user, iamClient, accessAnalyzerClient, accountId, complianceResultsChannel, iamPolicyEvaluator)
-	go processUserInlinePolicyCompliance(userWg, user, iamClient, accessAnalyzerClient, accountId, complianceResultsChannel, iamPolicyEvaluator)
+	gt.TrackGoroutine("processUserManagedPolicyCompliance", *user.Arn, accountId)
+	go processUserManagedPolicyCompliance(userWg, user, iamClient, accessAnalyzerClient, accountId, complianceResultsBuff, iamPolicyEvaluator)
+	gt.TrackGoroutine("processUserInlinePolicyCompliance", *user.Arn, accountId)
+	go processUserInlinePolicyCompliance(userWg, user, iamClient, accessAnalyzerClient, accountId, complianceResultsBuff, iamPolicyEvaluator)
 
-	// close channel when go routines complete
-	go func(roleWg *sync.WaitGroup) {
-		roleWg.Wait()
-		close(complianceResultsChannel)
-	}(userWg)
+	go func() {
+		userWg.Wait()
+		log.Printf("user compliance evaluation completed for [%v]\n", *user.Arn)
+		signal <- finishSignal{} // send finish signal to terminate for loop
+	}()
 
-	// read from channel, covert to aws config evaluation and send on results buffer channel
-	for result := range complianceResultsChannel {
-		complianceResults = append(complianceResults, result)
+Loop:
+	for {
+		select {
+		case result, ok := <-complianceResultsBuff:
+			{
+				if !ok {
+					log.Printf("compliance results channel closed for [%v]\n", shared.AwsIamUser)
+					return
+				}
+				// append all results from both go routines
+				complianceResults = append(complianceResults, result)
+				log.Printf("received compliance result for user [%v] : [%+v] \n", *user.Arn, result)
+			}
+		case <-signal:
+			{
+				break Loop
+			}
+		}
 	}
-
-	awsConfigEval := createAWSConfigEvaluation(shared.AwsIamUser, *user.Arn, iamPolicyEvaluator.GetEventTime(), complianceResults)
-	resultsBuffer <- awsConfigEval
-	log.Printf("iam role compliance evaluation for user [%v] completed : [%v] [%v] [%v] [%v] [%v]", *user.Arn,
-		*awsConfigEval.ComplianceResourceId, *awsConfigEval.ComplianceResourceType, awsConfigEval.ComplianceType,
-		*awsConfigEval.OrderingTimestamp, *awsConfigEval.Annotation)
-	return nil
+	//covert to aws config evaluation and send on evals buffer channel
+	awsConfigEvaluation := createAWSConfigEvaluation(shared.AwsIamUser, *user.Arn, iamPolicyEvaluator.GetEventTime(), complianceResults)
+	evalsBuff <- awsConfigEvaluation
+	log.Printf("evaluated user [%v] as [%v] \n", *user.Arn, awsConfigEvaluation.ComplianceType)
 }
 
-func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, resultsBuffer chan shared.ComplianceResult, iamPolicyEvaluator IAMPolicyEvaluator) {
-	defer iamPolicyEvaluator.DecrementWaitGroup()
+func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, complianceResultsBuff chan shared.ComplianceResult, iamPolicyEvaluator IAMPolicyEvaluator) {
+	gt := iamPolicyEvaluator.GetGoTracker()
+	gt.TrackDeferCall("processRoleManagedPolicyCompliance", *role.Arn, accountId)
 	defer wg.Done()
 	metricMgr := iamPolicyEvaluator.GetMetricMgr()
 	// loop through all policies attached to role and retrieve policy document
@@ -321,6 +376,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 		listAttachedRolePoliciesPage, err := listAttachedRolePoliciesPaginator.NextPage(context.Background())
 		// check for errors
 		if err != nil {
+			metricMgr.IncrementMetric(metricmgr.TotalFailedRolePolicies, 1)
 			log.Printf("error retrieving list of policies for role [%v] : [%v] \n ", *role.Arn, err)
 			complianceResult := shared.ComplianceResult{
 				Compliance:         configServiceTypes.ComplianceTypeNotApplicable,
@@ -328,15 +384,17 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 				Message:            err.Error(),
 				PolicyDocumentName: "",
 			}
-			log.Printf("compliance result for role [%v] : [%+v]", *role.Arn, complianceResult)
-			resultsBuffer <- complianceResult
-			log.Printf("compliance result sent for role [%v]", *role.Arn)
+			complianceResultsBuff <- complianceResult
+			iamPolicyEvaluator.AddError(errormgr.Error{
+				AccountId:          accountId,
+				ResourceType:       string(shared.AwsIamRole),
+				PolicyDocumentName: "",
+			})
 			return
 		}
 		// loop through policy documents and check for compliance
 		for _, policy := range listAttachedRolePoliciesPage.AttachedPolicies {
 			metricMgr.IncrementMetric(metricmgr.TotalRolePolicies, 1)
-			log.Printf("processing compliance check for policy [%v]\n", *policy.PolicyArn)
 			// retrieve policy document for policy
 			getPolicyOutput, err := iamClient.GetPolicy(context.Background(), &iam.GetPolicyInput{
 				PolicyArn: policy.PolicyArn,
@@ -351,9 +409,13 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
 				}
-				log.Printf("compliance result for role [%v] : [%+v]", *role.Arn, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for role [%v]", *role.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamRole),
+					PolicyDocumentName: *policy.PolicyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			getPolicyVersionOutput, err := iamClient.GetPolicyVersion(context.Background(), &iam.GetPolicyVersionInput{
@@ -370,12 +432,15 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
 				}
-				log.Printf("compliance result for role [%v] : [%+v]", *role.Arn, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for role [%v]", *role.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamRole),
+					PolicyDocumentName: *policy.PolicyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
-			log.Printf("policy name : [%v]\n", *policy.PolicyName)
 			decodedPolicyDocument, err := url.QueryUnescape(*getPolicyVersionOutput.PolicyVersion.Document)
 			if err != nil {
 				metricMgr.IncrementMetric(metricmgr.TotalFailedRolePolicies, 1)
@@ -386,9 +451,13 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
 				}
-				log.Printf("compliance result for role [%v] : [%+v]", *role.Arn, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for role [%v]", *role.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamRole),
+					PolicyDocumentName: *policy.PolicyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			isCompliantResult, err := shared.IsCompliant(accessAnalyzerClient, decodedPolicyDocument, iamPolicyEvaluator.GetRestrictedActions())
@@ -401,9 +470,13 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
 				}
-				log.Printf("compliance result for role [%v] : [%+v]", *role.Arn, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for role [%v]", *role.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamRole),
+					PolicyDocumentName: *policy.PolicyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			complianceResult := shared.ComplianceResult{
@@ -412,15 +485,14 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 				Message:            isCompliantResult.Message,
 				PolicyDocumentName: *policy.PolicyName,
 			}
-			log.Printf("compliance result for role [%v] : [%+v]", *role.Arn, complianceResult)
-			resultsBuffer <- complianceResult
-			log.Printf("compliance result added to batch for role [%v]", *role.Arn)
+			complianceResultsBuff <- complianceResult
 		}
 	}
 }
 
-func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, resultsBuffer chan shared.ComplianceResult, iamPolicyEvaluator IAMPolicyEvaluator) {
-	defer iamPolicyEvaluator.DecrementWaitGroup()
+func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, complianceResultsBuff chan shared.ComplianceResult, iamPolicyEvaluator IAMPolicyEvaluator) {
+	gt := iamPolicyEvaluator.GetGoTracker()
+	gt.TrackDeferCall("processRoleInlinePolicyCompliance", *role.Arn, accountId)
 	defer wg.Done()
 	metricMgr := iamPolicyEvaluator.GetMetricMgr()
 	// loop through all policies attached to role and retrieve policy document
@@ -431,6 +503,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 		listRolePoliciesPage, err := listRolePolicyPaginator.NextPage(context.Background())
 		// check for errors
 		if err != nil {
+			metricMgr.IncrementMetric(metricmgr.TotalFailedRolePolicies, 1)
 			log.Printf("error retrieving list of policies for role [%v] : [%v] \n ", *role.Arn, err)
 			complianceResult := shared.ComplianceResult{
 				Compliance:         configServiceTypes.ComplianceTypeNotApplicable,
@@ -438,15 +511,18 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 				Message:            err.Error(),
 				PolicyDocumentName: "",
 			}
-			log.Printf("compliance result for role [%v] : [%+v]", *role.Arn, complianceResult)
-			resultsBuffer <- complianceResult
-			log.Printf("compliance result added to batch for role [%v]", *role.Arn)
+			complianceResultsBuff <- complianceResult
+			iamPolicyEvaluator.AddError(errormgr.Error{
+				AccountId:          accountId,
+				ResourceType:       string(shared.AwsIamRole),
+				PolicyDocumentName: "",
+				Message:            err.Error(),
+			})
 			return
 		}
 		// loop through policy documents and check for compliance
 		for _, policyName := range listRolePoliciesPage.PolicyNames {
 			metricMgr.IncrementMetric(metricmgr.TotalRolePolicies, 1)
-			log.Printf("processing compliance check for policy [%v]\n", policyName)
 			// retrieve policy document for policy
 			getPolicyDocumentOutput, err := iamClient.GetRolePolicy(context.Background(), &iam.GetRolePolicyInput{
 				PolicyName: aws.String(policyName),
@@ -462,18 +538,34 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
 				}
-				log.Printf("compliance result for policy [%v] : [%+v]", policyName, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for policy [%v] in role [%v]", policyName, *role.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamRole),
+					PolicyDocumentName: policyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			policyDocument := *getPolicyDocumentOutput.PolicyDocument
-			log.Printf("policy name [%v]\n", policyName)
 			// check if policy document is compliant
 			decodedPolicyDocument, err := url.QueryUnescape(policyDocument)
 			if err != nil {
 				metricMgr.IncrementMetric(metricmgr.TotalFailedRolePolicies, 1)
 				log.Printf("error decoding policy document for policy [%v] : [%v]\n", policyName, err)
+				complianceResult := shared.ComplianceResult{
+					Compliance:         configServiceTypes.ComplianceTypeNotApplicable,
+					Reasons:            nil,
+					Message:            err.Error(),
+					PolicyDocumentName: policyName,
+				}
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamRole),
+					PolicyDocumentName: policyName,
+					Message:            err.Error(),
+				})
 			}
 			isCompliantResult, err := shared.IsCompliant(accessAnalyzerClient, decodedPolicyDocument, iamPolicyEvaluator.GetRestrictedActions())
 			// check for errors
@@ -486,9 +578,13 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
 				}
-				log.Printf("compliance result for policy [%v] : [%+v]", policyName, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for policy [%v] in role [%v]", policyName, *role.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamRole),
+					PolicyDocumentName: policyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			complianceResult := shared.ComplianceResult{
@@ -497,16 +593,12 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 				Message:            isCompliantResult.Message,
 				PolicyDocumentName: policyName,
 			}
-			log.Printf("compliance result for policy [%v] : [%+v]", policyName, complianceResult)
-			resultsBuffer <- complianceResult
-			log.Printf("compliance result added to batch for policy [%v] in role [%v]", policyName, *role.Arn)
+			complianceResultsBuff <- complianceResult
 		}
 	}
 }
 
 func createAWSConfigEvaluation(resourceType shared.ResourceType, resourceArn string, timeStamp time.Time, complianceResults []shared.ComplianceResult) configServiceTypes.Evaluation {
-	log.Printf("resource type [%v] resourceArn [%v]\n", resourceType, resourceArn)
-	log.Printf("compliance results count : [%v]\n", len(complianceResults))
 	// covert to aws config evaluations and send on buffered channel
 	var (
 		annotations           []string
@@ -514,39 +606,30 @@ func createAWSConfigEvaluation(resourceType shared.ResourceType, resourceArn str
 		evaluation            configServiceTypes.Evaluation
 	)
 
-	log.Printf("initial compliance type value : [%v]\n", currentComplianceType)
 	for _, complianceResult := range complianceResults {
 		// if empty, set to first compliance type from compliance results
 		if currentComplianceType == "" {
 			currentComplianceType = complianceResult.Compliance
 		}
-		log.Printf("current compliance type : [%v]\n", currentComplianceType)
-		log.Printf("switch on [%v]\n", complianceResult.Compliance)
 		switch complianceResult.Compliance {
 		case configServiceTypes.ComplianceTypeCompliant:
 			{
-				log.Printf("case [%v] continuing to next record\n", complianceResult.Compliance)
 				continue
 			}
 		case configServiceTypes.ComplianceTypeNonCompliant:
 			{
-				log.Printf("case [%v]\n", complianceResult.Compliance)
 				//  set compliance type to NON COMPLIANT
 				currentComplianceType = configServiceTypes.ComplianceTypeNonCompliant
 
 				// extract reasons from compliance result & add to annotations
 				if complianceResult.Reasons != nil {
 					reasons := shared.JoinReasons(complianceResult.Reasons, ";")
-					log.Printf("reasons : [%v]", reasons)
 					block := complianceResult.PolicyDocumentName + " : " + reasons
-					log.Printf("block : [%v]", block)
 					annotations = append(annotations, block)
-					log.Printf("annotations : [%v]", annotations)
 				}
 			}
 		case configServiceTypes.ComplianceTypeNotApplicable:
 			{
-				log.Printf("case [%v]\n", complianceResult.Compliance)
 				// if current compliance type != not applicable, set compliance type to not applicable
 				if currentComplianceType != configServiceTypes.ComplianceTypeNonCompliant {
 					currentComplianceType = configServiceTypes.ComplianceTypeNotApplicable
@@ -555,19 +638,15 @@ func createAWSConfigEvaluation(resourceType shared.ResourceType, resourceArn str
 				// extract messages from compliance result & add to annotations
 				if complianceResult.Message != "" {
 					block := complianceResult.PolicyDocumentName + " : " + complianceResult.Message
-					log.Printf("block : [%v]", block)
 					annotations = append(annotations, block)
-					log.Printf("annotations : [%v]", annotations)
 				}
 			}
 		default:
 			{
-				log.Printf("default case : [%v]", currentComplianceType)
+				log.Printf("default case : [%v]\n", currentComplianceType)
 			}
 		}
 	}
-
-	log.Printf("final compliance type for resource [%v] : [%v]", resourceArn, currentComplianceType)
 
 	// create aws config evaluation
 	evaluation = configServiceTypes.Evaluation{
@@ -577,12 +656,12 @@ func createAWSConfigEvaluation(resourceType shared.ResourceType, resourceArn str
 		Annotation:             aws.String(strings.Join(annotations, "\n")),
 		OrderingTimestamp:      aws.Time(timeStamp),
 	}
-	log.Printf("created aws config evaluation : [%v] [%v] [%v] [%v] [%v]", *evaluation.ComplianceResourceId, *evaluation.ComplianceResourceType, evaluation.ComplianceType, *evaluation.Annotation, *evaluation.OrderingTimestamp)
 	return evaluation
 }
 
-func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, resultsBuffer chan shared.ComplianceResult, iamPolicyEvaluator IAMPolicyEvaluator) {
-	defer iamPolicyEvaluator.DecrementWaitGroup()
+func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, complianceResultsBuff chan shared.ComplianceResult, iamPolicyEvaluator IAMPolicyEvaluator) {
+	gt := iamPolicyEvaluator.GetGoTracker()
+	gt.TrackDeferCall("processUserManagedPolicyCompliance", *user.Arn, accountId)
 	defer wg.Done()
 	metricMgr := iamPolicyEvaluator.GetMetricMgr()
 	// loop through all policies attached to role and retrieve policy document
@@ -593,6 +672,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 		listUserPoliciesPage, err := listAttachedUserPoliciesPaginator.NextPage(context.Background())
 		// check for errors
 		if err != nil {
+			metricMgr.IncrementMetric(metricmgr.TotalFailedUserPolicies, 1)
 			log.Printf("error retrieving list of policies for user [%v] : [%v] \n ", *user.UserName, err)
 			complianceResult := shared.ComplianceResult{
 				Compliance:         configServiceTypes.ComplianceTypeNotApplicable,
@@ -600,15 +680,18 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 				Message:            err.Error(),
 				PolicyDocumentName: "",
 			}
-			log.Printf("compliance result for user [%v] : [%+v]", *user.Arn, complianceResult)
-			resultsBuffer <- complianceResult
-			log.Printf("compliance result added to batch for user [%v]", *user.Arn)
+			complianceResultsBuff <- complianceResult
+			iamPolicyEvaluator.AddError(errormgr.Error{
+				AccountId:          accountId,
+				ResourceType:       string(shared.AwsIamUser),
+				PolicyDocumentName: "",
+				Message:            err.Error(),
+			})
 			return
 		}
 		// loop through policies attached to user
 		for _, policy := range listUserPoliciesPage.AttachedPolicies {
 			metricMgr.IncrementMetric(metricmgr.TotalUserPolicies, 1)
-			log.Printf("managed policy [%v]\n", *policy.PolicyArn)
 			// retrieve policy document
 			getPolicyOutput, err := iamClient.GetPolicy(context.Background(), &iam.GetPolicyInput{
 				PolicyArn: policy.PolicyArn,
@@ -623,9 +706,13 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
 				}
-				log.Printf("compliance result for policy [%v] : [%+v]", *policy.PolicyArn, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for policy [%v] in user [%v]", *policy.PolicyArn, *user.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamUser),
+					PolicyDocumentName: *policy.PolicyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			getPolicyVersionOutput, err := iamClient.GetPolicyVersion(context.Background(), &iam.GetPolicyVersionInput{
@@ -642,12 +729,15 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
 				}
-				log.Printf("compliance result for policy [%v] : [%+v]", *policy.PolicyArn, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for policy [%v] in user [%v]", *policy.PolicyArn, *user.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamUser),
+					PolicyDocumentName: *policy.PolicyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
-			log.Printf("policy name : [%v]", policy.PolicyName)
 			decodedPolicyDocument, err := url.QueryUnescape(*getPolicyVersionOutput.PolicyVersion.Document)
 			if err != nil {
 				metricMgr.IncrementMetric(metricmgr.TotalFailedUserPolicies, 1)
@@ -658,9 +748,13 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
 				}
-				log.Printf("compliance result for policy [%v] : [%+v]", *policy.PolicyArn, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for policy [%v] in user [%v]", *policy.PolicyArn, *user.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamUser),
+					PolicyDocumentName: *policy.PolicyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			isCompliantResult, err := shared.IsCompliant(accessAnalyzerClient, decodedPolicyDocument, iamPolicyEvaluator.GetRestrictedActions())
@@ -673,9 +767,13 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
 				}
-				log.Printf("compliance result for policy [%v] : [%+v]", *policy.PolicyArn, complianceResult)
-				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for policy [%v] in user [%v]", *policy.PolicyArn, *user.Arn)
+				complianceResultsBuff <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamUser),
+					PolicyDocumentName: *policy.PolicyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			complianceResult := shared.ComplianceResult{
@@ -684,15 +782,14 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 				Message:            isCompliantResult.Message,
 				PolicyDocumentName: *policy.PolicyName,
 			}
-			log.Printf("compliance result for policy [%v] : [%+v]", *policy.PolicyArn, complianceResult)
-			resultsBuffer <- complianceResult
-			log.Printf("compliance result added to batch for policy [%v] in user [%v]", *policy.PolicyArn, *user.Arn)
+			complianceResultsBuff <- complianceResult
 		}
 	}
 }
 
 func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamClient *iam.Client, accessAnalyzerClient *accessanalyzer.Client, accountId string, resultsBuffer chan shared.ComplianceResult, iamPolicyEvaluator IAMPolicyEvaluator) {
-	defer iamPolicyEvaluator.DecrementWaitGroup()
+	gt := iamPolicyEvaluator.GetGoTracker()
+	gt.TrackDeferCall("processUserInlinePolicyCompliance", *user.Arn, accountId)
 	defer wg.Done()
 	metricMgr := iamPolicyEvaluator.GetMetricMgr()
 	// loop through all policies attached to role and retrieve policy document
@@ -703,6 +800,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 		listUserPoliciesPage, err := listUserPolicyPaginator.NextPage(context.Background())
 		// check for errors
 		if err != nil {
+			metricMgr.IncrementMetric(metricmgr.TotalFailedUserPolicies, 1)
 			log.Printf("error retrieving list of policies for user [%v] : [%v] \n ", *user.UserName, err)
 			complianceResult := shared.ComplianceResult{
 				Compliance:         configServiceTypes.ComplianceTypeNotApplicable,
@@ -710,15 +808,18 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 				Message:            err.Error(),
 				PolicyDocumentName: "",
 			}
-			log.Printf("compliance result for user [%v] : [%+v]", *user.Arn, complianceResult)
 			resultsBuffer <- complianceResult
-			log.Printf("compliance result added to batch for user [%v]", *user.Arn)
+			iamPolicyEvaluator.AddError(errormgr.Error{
+				AccountId:          accountId,
+				ResourceType:       string(shared.AwsIamUser),
+				PolicyDocumentName: "",
+				Message:            err.Error(),
+			})
 			return
 		}
 		// loop through policy documents and check for compliance
 		for _, policyName := range listUserPoliciesPage.PolicyNames {
 			metricMgr.IncrementMetric(metricmgr.TotalUserPolicies, 1)
-			log.Printf("processing compliance check for policy [%v]\n", policyName)
 			// retrieve policy document for policy
 			getPolicyDocumentOutput, err := iamClient.GetUserPolicy(context.Background(), &iam.GetUserPolicyInput{
 				PolicyName: aws.String(policyName),
@@ -734,21 +835,36 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
 				}
-				log.Printf("compliance result for policy [%v] : [%+v]", policyName, complianceResult)
 				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for policy [%v] in user [%v]", policyName, *user.Arn)
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamUser),
+					PolicyDocumentName: policyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			policyDocument := *getPolicyDocumentOutput.PolicyDocument
-			log.Printf("policy name [%v]\n", policyName)
 			// check if policy document is compliantcompliance result added to batch
 			decodedPolicyDocument, err := url.QueryUnescape(policyDocument)
 			if err != nil {
 				metricMgr.IncrementMetric(metricmgr.TotalFailedUserPolicies, 1)
 				log.Printf("error decoding policy document for policy [%v] : [%v]\n", policyName, err)
-
+				complianceResult := shared.ComplianceResult{
+					Compliance:         configServiceTypes.ComplianceTypeNotApplicable,
+					Reasons:            nil,
+					Message:            err.Error(),
+					PolicyDocumentName: policyName,
+				}
+				resultsBuffer <- complianceResult
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamUser),
+					PolicyDocumentName: policyName,
+					Message:            err.Error(),
+				})
+				continue
 			}
-			log.Printf("decoded policy document [%v]\n", decodedPolicyDocument)
 			isCompliantResult, err := shared.IsCompliant(accessAnalyzerClient, decodedPolicyDocument, iamPolicyEvaluator.GetRestrictedActions())
 			// check for errors
 			if err != nil {
@@ -760,9 +876,13 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
 				}
-				log.Printf("compliance result for policy [%v] : [%+v]", policyName, complianceResult)
 				resultsBuffer <- complianceResult
-				log.Printf("compliance result added to batch for policy [%v] in role [%v]", policyName, *user.Arn)
+				iamPolicyEvaluator.AddError(errormgr.Error{
+					AccountId:          accountId,
+					ResourceType:       string(shared.AwsIamUser),
+					PolicyDocumentName: policyName,
+					Message:            err.Error(),
+				})
 				continue
 			}
 			complianceResult := shared.ComplianceResult{
@@ -771,21 +891,13 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 				Message:            isCompliantResult.Message,
 				PolicyDocumentName: policyName,
 			}
-			log.Printf("compliance result for policy [%v] : [%+v]", policyName, complianceResult)
 			resultsBuffer <- complianceResult
-			log.Printf("compliance result added to batch for policy [%v] in user [%v]", policyName, *user.Arn)
 		}
 	}
 }
 
-func processAllCompliance(restrictedActions []string, accountId string, results chan configServiceTypes.Evaluation, iamPolicyEvaluator IAMPolicyEvaluator) {
-	iamPolicyEvaluator.IncrementWaitGroup(2)
-	go processAccountRoleCompliance(restrictedActions, accountId, results, iamPolicyEvaluator)
-	go processAccountUserCompliance(restrictedActions, accountId, results, iamPolicyEvaluator)
-}
-
 // send evaluation to aws config
-func (i *_IAMPolicyEvaluator) SendEvaluations(evaluations []configServiceTypes.Evaluation, testMode bool) error {
+func (i *_IAMPolicyEvaluator) sendEvaluations(evaluations []configServiceTypes.Evaluation, testMode bool) error {
 	metricMgr := i.GetMetricMgr()
 	// retrieve sdk config client
 	accountId := i.accountId
@@ -803,51 +915,152 @@ func (i *_IAMPolicyEvaluator) SendEvaluations(evaluations []configServiceTypes.E
 	if err != nil {
 		metricMgr.IncrementMetric(metricmgr.TotalFailedEvaluations, 1)
 		log.Printf("error sending evaluations to aws config : [%v]\n", err)
-		return err
+		configErr := errormgr.Error{
+			AccountId:          accountId,
+			Message:            err.Error(),
+			ResourceType:       "",
+			PolicyDocumentName: "",
+		}
+		i.AddError(configErr)
+		return configErr
 	}
 	metricMgr.IncrementMetric(metricmgr.TotalEvaluations, int32(len(evaluations)))
 	return nil
 }
 
-// check no access
-func (i *_IAMPolicyEvaluator) CheckNoAccess(scope string, restrictedActions []string, accountId string, resultsBuffer chan configServiceTypes.Evaluation) error {
-	log.Printf("scope=%s, restrictedActions=%v, accountId=%s\n", scope, restrictedActions, accountId)
+// check for restricted actions
+func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActions []string, accountId string) {
+	gt := i.GetGoTracker()
+	mm := i.GetMetricMgr()
+
+	prefix := time.Now().Format(time.RFC3339)
+
+	evalsBuff := make(chan configServiceTypes.Evaluation, 105)
+	evalWg := &sync.WaitGroup{}
+	evalWg.Add(1)
+
+	go func() {
+		defer evalWg.Done()
+		var batchEvaluations []configServiceTypes.Evaluation
+		maxBatchCount := 100
+		currentIndex := 0
+
+		for evaluation := range evalsBuff {
+			{
+				i.exporter.AddEntry(evaluation)
+				truncatedAnnotation := truncateString(*evaluation.Annotation, 250)
+				evaluation.Annotation = &truncatedAnnotation
+				log.Printf("evaluation received for [%v]\n", *evaluation.ComplianceResourceId)
+				currentIndex++
+				batchEvaluations = append(batchEvaluations, evaluation)
+
+				if currentIndex == maxBatchCount {
+					err := i.sendEvaluations(batchEvaluations, false)
+					if err != nil {
+						log.Printf("error sending evaluations to aws config: [%v]\n", err)
+					}
+					mm.IncrementMetric(metricmgr.TotalEvaluations, int32(len(batchEvaluations)))
+					currentIndex = 0
+					batchEvaluations = nil
+					log.Printf("sent [%v] evaluations to aws config\n", len(batchEvaluations))
+				}
+			}
+		}
+		if currentIndex > 0 {
+			err := i.sendEvaluations(batchEvaluations, false)
+			if err != nil {
+				log.Printf("error sending evaluations to aws config: [%v]\n", err)
+			}
+			mm.IncrementMetric(metricmgr.TotalEvaluations, int32(len(batchEvaluations)))
+			log.Printf("sent [%v] evaluations to aws config\n", len(batchEvaluations))
+		}
+		log.Println("Exiting AWS config evals go routine")
+	}()
+
 	switch strings.ToLower(scope) {
 	case ROLES:
 		{
-			i.IncrementWaitGroup(1)
-			go processAccountRoleCompliance(restrictedActions, accountId, resultsBuffer, i)
+			roleWg := &sync.WaitGroup{}
+			roleWg.Add(1)
+			go processAccountRoleCompliance(roleWg, restrictedActions, accountId, evalsBuff, i)
+			gt.TrackGoroutine("processAccountRoleCompliance", restrictedActions, accountId)
+			roleWg.Wait()
 		}
 	case USERS:
 		{
-			i.IncrementWaitGroup(1)
-			go processAccountUserCompliance(restrictedActions, accountId, resultsBuffer, i)
+			userWg := &sync.WaitGroup{}
+			userWg.Add(1)
+			go processAccountUserCompliance(userWg, restrictedActions, accountId, evalsBuff, i)
+			gt.TrackGoroutine("processAccountUserCompliance", restrictedActions, accountId)
+			userWg.Wait()
 		}
 	case ALL:
 		{
-			processAllCompliance(restrictedActions, accountId, resultsBuffer, i)
+			roleWg := &sync.WaitGroup{}
+			roleWg.Add(1)
+			go processAccountRoleCompliance(roleWg, restrictedActions, accountId, evalsBuff, i)
+			gt.TrackGoroutine("processAccountRoleCompliance", restrictedActions, accountId)
+
+			userWg := &sync.WaitGroup{}
+			userWg.Add(1)
+			go processAccountUserCompliance(userWg, restrictedActions, accountId, evalsBuff, i)
+			gt.TrackGoroutine("processAccountUserCompliance", restrictedActions, accountId)
+			userWg.Wait()
+			roleWg.Wait()
 		}
 	}
-	return nil
-}
+	close(evalsBuff)
+	evalWg.Wait()
 
-// ###############################################################################################################
-// MANAGING WAIT GROUP METHODS
-// ###############################################################################################################
+	errorWg := &sync.WaitGroup{}
+	errorWg.Add(1)
 
-// increment wait group
-func (i *_IAMPolicyEvaluator) IncrementWaitGroup(value int) {
-	i.wg.Add(value)
-}
+	go func() {
+		defer errorWg.Done()
+		err := i.errorMgr.WriteToCSV(string(shared.ErrorLogFileObjectKey))
+		if err != nil {
+			log.Printf("error writing error log to csv : [%v]\n", err)
+		}
+		log.Printf("error log file written to csv\n")
+	}()
 
-// decrement wait group
-func (i *_IAMPolicyEvaluator) DecrementWaitGroup() {
-	i.wg.Done()
-}
+	exportsWg := &sync.WaitGroup{}
+	exportsWg.Add(1)
+	go func() {
+		defer exportsWg.Done()
+		errorWg.Wait()
+		key, err := i.exporter.ExportToS3(string(shared.ConfigFileBucketName), string(shared.ErrorLogFileObjectKey), prefix)
+		if err != nil {
+			log.Printf("error writing error log to s3 : [%v]\n", err)
+		}
+		log.Printf("error log file written to s3 [%v]\n", key)
+	}()
 
-// wait
-func (i *_IAMPolicyEvaluator) Wait() {
-	i.wg.Wait()
+	executionLogWg := &sync.WaitGroup{}
+	executionLogWg.Add(1)
+
+	go func() {
+		defer executionLogWg.Done()
+		err := i.exporter.WriteToCSV(string(shared.ExecutionLogFileName))
+		if err != nil {
+			log.Printf("error writing execution log to csv : [%v]\n", err)
+		}
+		log.Printf("execution log file written to csv\n")
+	}()
+
+	exportsWg.Add(1)
+	go func() {
+		defer exportsWg.Done()
+		defer executionLogWg.Wait()
+		key, err := i.exporter.ExportToS3(string(shared.ConfigFileBucketName), string(shared.ExecutionLogFileName), prefix)
+		if err != nil {
+			log.Printf("error writing execution log to s3 : [%v]\n", err)
+		}
+		log.Printf("execution log file written to s3 [%v]\n", key)
+	}()
+
+	exportsWg.Wait()
+	log.Printf("CheckAccessNotGranted completed for account [%v]\n", accountId)
 }
 
 // ###############################################################################################################
@@ -907,4 +1120,45 @@ func (i *_IAMPolicyEvaluator) GetEventTime() time.Time {
 // get metric mgr
 func (i *_IAMPolicyEvaluator) GetMetricMgr() metricmgr.MetricMgr {
 	return i.metricMgr
+}
+
+// get go tracker
+func (i *_IAMPolicyEvaluator) GetGoTracker() gotracker.GoroutineTracker {
+	return i.goTracker
+}
+
+// get context
+func (i *_IAMPolicyEvaluator) GetContext() context.Context {
+	return i.ctx
+}
+
+// set test mode
+func (i *_IAMPolicyEvaluator) SetTestMode(testMode string) {
+	if strings.ToLower(testMode) == "true" {
+		i.testMode = true
+	} else {
+		i.testMode = false
+	}
+}
+
+// get test mode
+func (i *_IAMPolicyEvaluator) GetTestMode() bool {
+	return i.testMode
+}
+
+// add error
+func (i *_IAMPolicyEvaluator) AddError(err error) {
+	errorAssert := err.(errormgr.Error)
+	i.errorMgr.StoreError(errorAssert)
+
+}
+
+func truncateString(str string, maxLength int) string {
+	if len(str) > maxLength {
+		if maxLength > 3 {
+			return str[:maxLength-3] + "..."
+		}
+		return str[:maxLength]
+	}
+	return str
 }
