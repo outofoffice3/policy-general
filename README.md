@@ -44,8 +44,11 @@ This solution enhances security and compliance by enforcing IAM policy restricti
 |-- internal/                   # internal pkgs 
   |-- awsclientmgr/             # aws client manager
   |-- entrymgr/                 # entry manager    
+  |-- errormgmr/                # error manager
   |-- exporter/                 # exporter
+  |-- gotracker/                # go tracker
   |-- iampolicyevaluator/       # iam policy evaluator
+  |-- metricmgr/                # metric manager
   |-- shared/                   # shared 
 ```
 #### Package Descriptions
@@ -53,8 +56,11 @@ This solution enhances security and compliance by enforcing IAM policy restricti
 - `handle` - handles config event (entry point for processing)
 - `awslcientmgr` - stores sdk clients used (iam, s3, access analyzer) 
 - `entrymgr` - manages execution log entries 
+- `errormgr` - manages all errors during execution
 - `exporter` - writes execution log entries to csv & publishes to S3 bucket
+- `gotracker` - debugging interface for ensuring all go routines are properly closed
 - `iampolicyevaluator` - main interface.  Process compliance checks
+- `metricmgr` - manages metrics about the execution (ex: total roles, total failed roles etc...)
 - `shared` - shared constants & types
 
 ## Prerequisites
