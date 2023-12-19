@@ -10,27 +10,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/configservice"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/outofoffice3/policy-general/internal/shared"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestAwsClientMgr(t *testing.T) {
 	assertion := assert.New(t)
-	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-		if service == sts.ServiceID {
-			return aws.Endpoint{
-				URL:           "https://sts.us-east-1.amazonaws.com", // Replace with your STS regional endpoint
-				SigningRegion: region,
-			}, nil
-		}
-		// Fallback to default resolution
-		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-	})
 	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithSharedConfigProfile("logadmin"),
-		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(customResolver))
+		config.WithSharedConfigProfile("PLACEDHOLDER"),
+		config.WithRegion("PLACEHOLDER"))
 	if err != nil {
 		panic("configuration error, " + err.Error())
 	}
@@ -39,8 +27,8 @@ func TestAwsClientMgr(t *testing.T) {
 	config := shared.Config{
 		AWSAccounts: []shared.AWSAccount{
 			{
-				AccountID: "017608207428",
-				RoleName:  "arn:aws:iam::017608207428:role/checkNoAccessPolicyGeneral2023",
+				AccountID: "PLACEHOLDER",
+				RoleName:  "PLACEHOLDER",
 			},
 		},
 		RestrictedActions: []string{
@@ -49,10 +37,11 @@ func TestAwsClientMgr(t *testing.T) {
 			"ec2:DescribeInstances",
 			"lambda:InvokeFunction",
 		},
-		Scope: "all",
+		Scope:    "all",
+		TestMode: "true",
 	}
 
-	accountId := "033197602013"
+	accountId := "PLACEHOLDER"
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	awscm, err := Init(AWSClientMgrInitConfig{
@@ -106,4 +95,33 @@ func TestAwsClientMgr(t *testing.T) {
 	assertion.False(ok)
 	assertion.Nil(resultClient)
 
+	errorConfig := shared.Config{
+		AWSAccounts: []shared.AWSAccount{
+			{
+				AccountID: "PLACEHOLDER",
+				RoleName:  "PLACEHOLDER",
+			},
+		},
+		RestrictedActions: []string{
+			"s3:GetObject",
+			"s3:PutObject",
+			"ec2:DescribeInstances",
+			"lambda:InvokeFunction",
+		},
+		Scope:    "all",
+		TestMode: "true",
+	}
+
+	// make invalid credentials to force error cases
+	cfg.Credentials = aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
+		return aws.Credentials{}, nil
+	})
+	errorTest, forceErr := Init(AWSClientMgrInitConfig{
+		Config:    errorConfig,
+		AccountId: "invalid account id",
+		Cfg:       cfg,
+		Ctx:       ctx,
+	})
+	assertion.Error(forceErr)
+	assertion.Nil(errorTest)
 }

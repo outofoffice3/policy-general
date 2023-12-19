@@ -3,15 +3,12 @@ package handle
 import (
 	"log"
 	"sync"
-	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/outofoffice3/policy-general/internal/iampolicyevaluator"
 )
 
-func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevaluator.IAMPolicyEvaluator) error {
-	policyEvaluator.SetResultToken(event.ResultToken)
-	policyEvaluator.SetEventTime(time.Now())
+func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevaluator.IAMPolicyEvaluator) {
 	awsclientmgr := policyEvaluator.GetAWSClientMgr()
 	scope := policyEvaluator.GetScope()
 	log.Printf("scope: [%s]\n", scope)
@@ -26,6 +23,4 @@ func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevalua
 	}
 	accountsWg.Wait()
 	log.Printf("all accounts completed successfully")
-
-	return nil
 }

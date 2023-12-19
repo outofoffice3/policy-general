@@ -23,6 +23,7 @@ func TestExporter(t *testing.T) {
 	// ####################################
 	assertion := assert.New(t)
 	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithSharedConfigProfile("logadmin"),
 		config.WithRegion(string(shared.UsEast1)))
 	log.Printf("cfg : [%+v] ", cfg)
 	assertion.NoError(err, "should not be an error")
@@ -42,10 +43,12 @@ func TestExporter(t *testing.T) {
 			"ec2:DescribeInstances",
 			"lambda:InvokeFunction",
 		},
-		Scope: "all",
+		Scope:    "all",
+		TestMode: "true",
 	}
 	log.Println(config)
 	awscmConfig := awsclientmgr.AWSClientMgrInitConfig{
+		Ctx:       context.Background(),
 		Cfg:       cfg,
 		Config:    config,
 		AccountId: accountId,
@@ -126,5 +129,13 @@ func TestExporter(t *testing.T) {
 	assertion.Empty(key, "should be empty")
 	err = exporter.deleteFromS3("non-existent-bucket", key)
 	assertion.Error(err, "should be an error")
+	err = exporter.WriteToCSV("/invalid-test...name")
+	assertion.Error(err, "should be an error")
+
+	errExport, err := Init(ExporterInitConfig{
+		AwsClientMgr: nil,
+	})
+	assertion.Error(err, "should be an error")
+	assertion.Nil(errExport, "should be nil")
 
 }

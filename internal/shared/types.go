@@ -34,6 +34,7 @@ type ComplianceResult struct {
 	Reasons            []accessAnalyzerTypes.ReasonSummary `json:"reasons"`
 	Message            string                              `json:"message"`
 	PolicyDocumentName string                              `json:"policyDocumentName"`
+	ResourceArn        string                              `json:"resourceArn"`
 }
 
 type ExecutionLogEntry struct {

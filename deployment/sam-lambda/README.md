@@ -1,6 +1,8 @@
 # Deploying Custom AWS Config Rule & Lambda Function
 
-UNDER DEVELOPMENT
+## Table of Contents
+- [Requirements](#requirements)
+- [Deployment Steps](#deployment-steps)
 
 ## Requirements
 
@@ -9,9 +11,27 @@ UNDER DEVELOPMENT
 * [Golang](https://golang.org)
 * SAM CLI - [Install the SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
 
-## Setup process
+## Deployment Steps
 
-UNDER DEVELOPMENT 
+1. **SAM build**
+
+Navigate to your /sam-lambda directory and execute the following command:
+
+```bash 
+sam build 
+```
+This command compiles source code, downloads dependencies, and creates deployment artifacts.
+
+2. **SAM deploy**: 
+
+After building, deploy your application using:
+```bash 
+sam deploy --guided
+```
+
+The --guided flag initiates an interactive deployment process, prompting you for the necessary parameters like the AWS region, stack name, and any specific configurations required for your AWS Lambda function and custom AWS Config rule.
+
+Your serverless application, including the AWS Lambda function and the custom AWS Config rule, will be operational in your AWS environment after a successful deployment. Check the AWS CloudFormation console for deployment status and details.
 
 # Appendix
 
@@ -49,15 +69,3 @@ If it's already installed, run the following command to ensure it's the latest v
 ```shell
 choco upgrade golang
 ```
-
-## Bringing to the next level
-
-Here are a few ideas that you can use to get more acquainted as to how this overall process works:
-
-* Create an additional API resource (e.g. /hello/{proxy+}) and return the name requested through this new path
-* Update unit test to capture that
-* Package & Deploy
-
-Next, you can use the following resources to know more about beyond hello world samples and how others structure their Serverless applications:
-
-* [AWS Serverless Application Repository](https://aws.amazon.com/serverless/serverlessrepo/)

@@ -20,3 +20,4 @@
 *.env
 *Makefile
 *.DS_Store
+private*

@@ -38,6 +38,7 @@ func handler(ctx context.Context, event events.ConfigEvent) error {
 	// INITIALIZE IAM POLICY EVALUATOR INTERFACE
 	// ############################################################
 
+	// configure AWS SDK config
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithRegion(string(shared.UsEast1)),
 		config.WithRetryMode(aws.RetryModeStandard),
@@ -94,7 +95,7 @@ func handler(ctx context.Context, event events.ConfigEvent) error {
 		panic("invalid scope")
 	}
 
-	// check if actions are valid
+	// check if restricted actions are valid
 	for _, restrictedAction := range config.RestrictedActions {
 		log.Printf("restricted action: [%v]\n", restrictedAction)
 		if !shared.IsValidAction(restrictedAction) {
@@ -102,25 +103,24 @@ func handler(ctx context.Context, event events.ConfigEvent) error {
 			panic("invalid action: " + "[ " + restrictedAction + " ]")
 		}
 	}
+	log.Printf("test mode : [%v\n", config.TestMode)
 	log.Printf("config file parsed")
 
 	// ############################################################
 
-	log.Printf("input cfg for iampolicyevaluator : [%+v]", cfg)
+	// initialize IAM policy evaluator interface
 	ctxWithCancel, cancel := context.WithCancel(context.Background())
 	complianceEvaluator = iampolicyevaluator.Init(iampolicyevaluator.IAMPolicyEvaluatorInitConfig{
-		Cfg:        cfg,
-		Config:     config,
-		AccountId:  event.AccountID,
-		Ctx:        ctxWithCancel,
-		CancelFunc: cancel,
+		Cfg:         cfg,
+		Config:      config,
+		Ctx:         ctxWithCancel,
+		CancelFunc:  cancel,
+		ResultToken: event.ResultToken,
+		AccountId:   event.AccountID,
 	})
 
 	// Handle config event & start service execution
-	err = handle.HandleConfigEvent(event, complianceEvaluator)
-	if err != nil {
-		return err
-	}
+	handle.HandleConfigEvent(event, complianceEvaluator)
 
 	return nil
 }

@@ -55,3 +55,19 @@ func IsCompliant(client *accessanalyzer.Client, policyDocument string, restricte
 		Message:    *output.Message,
 	}, nil
 }
+func ValidateAnnotation(str string, maxLength int) string {
+	if str != "" {
+		return truncateString(str, maxLength)
+	}
+	return "N/A"
+}
+
+func truncateString(str string, maxLength int) string {
+	if len(str) > maxLength {
+		if maxLength > 3 {
+			return str[:maxLength-3] + "..."
+		}
+		return str[:maxLength]
+	}
+	return str
+}

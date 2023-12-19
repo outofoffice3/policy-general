@@ -1,5 +1,3 @@
-**DISCLAIMER: CURRENTLY PERFORMING INTEGRATION TESTING.  WILL BE READY FOR RELEASE 12/8/2023**
-
 <div align="center">
  <img src="./graphics/generalshao.gif" alt="walk" width="250"/>
 </div>
@@ -94,10 +92,14 @@ Install AWS SAM CLI by following the [AWS SAM CLI Installation Guide](https://do
       "Action": [
         "iam:ListUsers",
         "iam:ListUserPolicies",
+        "iam:ListAttachedUserPolicies",
         "iam:GetRolePolicy",
         "iam:ListRoles",
         "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
         "iam:GetUserPolicy",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
         "access-analyzer:CheckAccessNotGranted"
       ],
       "Resource": "*"
@@ -209,7 +211,8 @@ Below are the permissions used for the lambda function execution role:
         {
             "Action": [
                 "s3:GetObject",
-                "s3:PutObject"
+                "s3:PutObject",
+                "s3:ListAllMyBuckets"
             ],
             "Resource": "*",
             "Effect": "Allow",
@@ -219,10 +222,14 @@ Below are the permissions used for the lambda function execution role:
             "Action": [
                 "iam:ListUsers",
                 "iam:ListUserPolicies",
+                "iam:ListAttachedUserPolicies",
+                "iam:GetUserPolicy",
                 "iam:GetRolePolicy",
                 "iam:ListRoles",
                 "iam:ListRolePolicies",
-                "iam:GetUserPolicy"
+                "iam:ListAttachedRolePolicies",
+                "iam:GetPolicy",
+                "iam:GetPolicyVersion"
             ],
             "Resource": "*",
             "Effect": "Allow",
@@ -231,7 +238,9 @@ Below are the permissions used for the lambda function execution role:
         {
             "Action": [
                 "config:PutEvaluations",
-                "access-analyzer:CheckAccessNotGranted"
+                "config:DescribeConfigurationRecorders",
+                "access-analyzer:CheckAccessNotGranted",
+                "access-analyzer:ListAnalyzers"
             ],
             "Resource": "*",
             "Effect": "Allow",

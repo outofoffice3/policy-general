@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,25 +38,19 @@ type IAMPolicyEvaluator interface {
 	AddError(err error)
 
 	// ###############################################################################################################
-	// GETTER & SETTER METHODS
+	// GETTER METHODS
 	// ###############################################################################################################
 
 	// get aws client mgr
 	GetAWSClientMgr() awsclientmgr.AWSClientMgr
 	// get exporter
 	GetExporter() exporter.Exporter
-	// set result token
-	SetResultToken(token string)
 	// get result token
 	GetResultToken() string
-	// set scope
-	SetScope(scope string)
 	// get scope
 	GetScope() string
 	// get restricted actions
 	GetRestrictedActions() []string
-	// set event time
-	SetEventTime(eventTime time.Time)
 	// get event time
 	GetEventTime() time.Time
 	// get metric mgr
@@ -64,8 +59,6 @@ type IAMPolicyEvaluator interface {
 	GetGoTracker() gotracker.GoroutineTracker
 	// get context
 	GetContext() context.Context
-	// set testmode
-	SetTestMode(testMode string)
 	// get testmode
 	GetTestMode() bool
 }
@@ -78,9 +71,8 @@ type _IAMPolicyEvaluator struct {
 	accountId         string
 	restrictedActions []string
 	testMode          bool
-	errorLogChan      chan errormgr.Error
-	errorMgr          errormgr.ErrorMgr
 	eventTime         time.Time
+	errorMgr          errormgr.ErrorMgr
 	awsClientMgr      awsclientmgr.AWSClientMgr
 	exporter          exporter.Exporter
 	metricMgr         metricmgr.MetricMgr
@@ -88,11 +80,12 @@ type _IAMPolicyEvaluator struct {
 }
 
 type IAMPolicyEvaluatorInitConfig struct {
-	Cfg        aws.Config
-	Config     shared.Config
-	AccountId  string
-	Ctx        context.Context
-	CancelFunc func()
+	Cfg         aws.Config
+	Config      shared.Config
+	Ctx         context.Context
+	CancelFunc  func()
+	ResultToken string
+	AccountId   string
 }
 
 // returns an instance of iam policy evaluator
@@ -109,8 +102,7 @@ func Init(config IAMPolicyEvaluatorInitConfig) IAMPolicyEvaluator {
 	})
 	// return errors
 	if err != nil {
-		log.Printf("error initializing aws client mgr : %v", err)
-		return nil
+		panic("error initializing aws client mgr : " + err.Error())
 	}
 
 	// creeate exporter
@@ -121,8 +113,8 @@ func Init(config IAMPolicyEvaluatorInitConfig) IAMPolicyEvaluator {
 	})
 	// return errors
 	if err != nil {
-		log.Printf("error initializing exporter : %v", err)
-		return nil
+		panic("error initializing exporter : " + err.Error())
+
 	}
 
 	mm := metricmgr.Init()
@@ -136,19 +128,23 @@ func Init(config IAMPolicyEvaluatorInitConfig) IAMPolicyEvaluator {
 
 	// create iam policy evaluator
 	iamPolicyEvaluator := NewIAMPolicyEvaluator(IAMPolicyEvaluatorInput{
-		ctx:               config.Ctx,
-		cancelFunc:        config.CancelFunc,
-		awsClientMgr:      awsClientMgr,
-		exporter:          exporter,
+		ctx:        config.Ctx,
+		cancelFunc: config.CancelFunc,
+
+		// initialize variables
 		accountID:         config.AccountId,
+		resultToken:       config.ResultToken,
 		restrictedActions: config.Config.RestrictedActions,
 		scope:             config.Config.Scope,
-		metricMgr:         mm,
-		goTracker:         gt,
-		errorMgr:          errorMgr,
-	})
+		testMode:          config.Config.TestMode,
 
-	iamPolicyEvaluator.SetTestMode(config.Config.TestMode)
+		// initialize interfaces
+		exporter:     exporter,
+		awsClientMgr: awsClientMgr,
+		metricMgr:    mm,
+		goTracker:    gt,
+		errorMgr:     errorMgr,
+	})
 
 	return iamPolicyEvaluator
 }
@@ -161,7 +157,9 @@ type IAMPolicyEvaluatorInput struct {
 	exporter          exporter.Exporter
 	accountID         string
 	scope             string
+	resultToken       string
 	restrictedActions []string
+	testMode          string
 	metricMgr         metricmgr.MetricMgr
 	goTracker         gotracker.GoroutineTracker
 	errorMgr          errormgr.ErrorMgr
@@ -169,19 +167,37 @@ type IAMPolicyEvaluatorInput struct {
 
 // creates a new iam policy evaluator
 func NewIAMPolicyEvaluator(input IAMPolicyEvaluatorInput) IAMPolicyEvaluator {
-	return &_IAMPolicyEvaluator{
-		ctx:               input.ctx,
-		cancelFunc:        input.cancelFunc,
-		scope:             input.scope,
-		accountId:         input.accountID,
-		restrictedActions: input.restrictedActions,
-		awsClientMgr:      input.awsClientMgr,
-		exporter:          input.exporter,
-		metricMgr:         input.metricMgr,
-		goTracker:         input.goTracker,
-		errorLogChan:      make(chan errormgr.Error, 5),
-		errorMgr:          input.errorMgr,
+
+	log.Printf("test mode [%v]\n", input.testMode)
+	// convert testMode string to bool
+	testMode, err := strconv.ParseBool(input.testMode)
+	if err != nil {
+		log.Println("error converting testMode string to bool : " + err.Error())
 	}
+	log.Printf("test mode [%v]\n", testMode)
+
+	iamPolicyEvaluator := &_IAMPolicyEvaluator{
+		// set context
+		ctx:        input.ctx,
+		cancelFunc: input.cancelFunc,
+
+		// set variables
+		accountId:         input.accountID,
+		resultToken:       input.resultToken,
+		eventTime:         time.Now().UTC(),
+		restrictedActions: input.restrictedActions,
+		testMode:          testMode,
+		scope:             input.scope,
+
+		// set interfaces
+		awsClientMgr: input.awsClientMgr,
+		exporter:     input.exporter,
+		metricMgr:    input.metricMgr,
+		goTracker:    input.goTracker,
+		errorMgr:     input.errorMgr,
+	}
+
+	return iamPolicyEvaluator
 }
 
 // ###############################################################################################################
@@ -219,6 +235,7 @@ func processAccountRoleCompliance(wg *sync.WaitGroup, restrictedActions []string
 				ResourceType:       string(shared.AwsIamRole),
 				PolicyDocumentName: "",
 				Message:            err.Error(),
+				ResourceArn:        "",
 			})
 			return
 		}
@@ -307,6 +324,7 @@ func processAccountUserCompliance(wg *sync.WaitGroup, restrictedActions []string
 				ResourceType:       string(shared.AwsIamUser),
 				PolicyDocumentName: "",
 				Message:            err.Error(),
+				ResourceArn:        "",
 			})
 			return
 		}
@@ -383,12 +401,14 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 				Reasons:            nil,
 				Message:            err.Error(),
 				PolicyDocumentName: "",
+				ResourceArn:        *role.Arn,
 			}
 			complianceResultsBuff <- complianceResult
 			iamPolicyEvaluator.AddError(errormgr.Error{
 				AccountId:          accountId,
 				ResourceType:       string(shared.AwsIamRole),
 				PolicyDocumentName: "",
+				ResourceArn:        *role.Arn,
 			})
 			return
 		}
@@ -408,6 +428,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
+					ResourceArn:        *role.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -415,6 +436,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					ResourceType:       string(shared.AwsIamRole),
 					PolicyDocumentName: *policy.PolicyName,
 					Message:            err.Error(),
+					ResourceArn:        *role.Arn,
 				})
 				continue
 			}
@@ -431,6 +453,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
+					ResourceArn:        *role.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -438,6 +461,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					ResourceType:       string(shared.AwsIamRole),
 					PolicyDocumentName: *policy.PolicyName,
 					Message:            err.Error(),
+					ResourceArn:        *role.Arn,
 				})
 				continue
 			}
@@ -450,6 +474,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
+					ResourceArn:        *role.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -457,6 +482,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					ResourceType:       string(shared.AwsIamRole),
 					PolicyDocumentName: *policy.PolicyName,
 					Message:            err.Error(),
+					ResourceArn:        *role.Arn,
 				})
 				continue
 			}
@@ -469,6 +495,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
+					ResourceArn:        *role.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -476,6 +503,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 					ResourceType:       string(shared.AwsIamRole),
 					PolicyDocumentName: *policy.PolicyName,
 					Message:            err.Error(),
+					ResourceArn:        *role.Arn,
 				})
 				continue
 			}
@@ -484,6 +512,7 @@ func processRoleManagedPolicyCompliance(wg *sync.WaitGroup, role types.Role, iam
 				Reasons:            isCompliantResult.Reasons,
 				Message:            isCompliantResult.Message,
 				PolicyDocumentName: *policy.PolicyName,
+				ResourceArn:        *role.Arn,
 			}
 			complianceResultsBuff <- complianceResult
 		}
@@ -510,6 +539,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 				Reasons:            nil,
 				Message:            err.Error(),
 				PolicyDocumentName: "",
+				ResourceArn:        *role.Arn,
 			}
 			complianceResultsBuff <- complianceResult
 			iamPolicyEvaluator.AddError(errormgr.Error{
@@ -517,6 +547,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 				ResourceType:       string(shared.AwsIamRole),
 				PolicyDocumentName: "",
 				Message:            err.Error(),
+				ResourceArn:        *role.Arn,
 			})
 			return
 		}
@@ -537,6 +568,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
+					ResourceArn:        *role.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -544,6 +576,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 					ResourceType:       string(shared.AwsIamRole),
 					PolicyDocumentName: policyName,
 					Message:            err.Error(),
+					ResourceArn:        *role.Arn,
 				})
 				continue
 			}
@@ -558,6 +591,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
+					ResourceArn:        *role.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -565,6 +599,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 					ResourceType:       string(shared.AwsIamRole),
 					PolicyDocumentName: policyName,
 					Message:            err.Error(),
+					ResourceArn:        *role.Arn,
 				})
 			}
 			isCompliantResult, err := shared.IsCompliant(accessAnalyzerClient, decodedPolicyDocument, iamPolicyEvaluator.GetRestrictedActions())
@@ -577,6 +612,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
+					ResourceArn:        *role.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -584,6 +620,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 					ResourceType:       string(shared.AwsIamRole),
 					PolicyDocumentName: policyName,
 					Message:            err.Error(),
+					ResourceArn:        *role.Arn,
 				})
 				continue
 			}
@@ -592,6 +629,7 @@ func processRoleInlinePolicyCompliance(wg *sync.WaitGroup, role types.Role, iamC
 				Reasons:            isCompliantResult.Reasons,
 				Message:            isCompliantResult.Message,
 				PolicyDocumentName: policyName,
+				ResourceArn:        *role.Arn,
 			}
 			complianceResultsBuff <- complianceResult
 		}
@@ -679,6 +717,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 				Reasons:            nil,
 				Message:            err.Error(),
 				PolicyDocumentName: "",
+				ResourceArn:        *user.Arn,
 			}
 			complianceResultsBuff <- complianceResult
 			iamPolicyEvaluator.AddError(errormgr.Error{
@@ -686,6 +725,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 				ResourceType:       string(shared.AwsIamUser),
 				PolicyDocumentName: "",
 				Message:            err.Error(),
+				ResourceArn:        *user.Arn,
 			})
 			return
 		}
@@ -705,6 +745,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
+					ResourceArn:        *user.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -712,6 +753,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					ResourceType:       string(shared.AwsIamUser),
 					PolicyDocumentName: *policy.PolicyName,
 					Message:            err.Error(),
+					ResourceArn:        *user.Arn,
 				})
 				continue
 			}
@@ -728,6 +770,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
+					ResourceArn:        *user.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -735,6 +778,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					ResourceType:       string(shared.AwsIamUser),
 					PolicyDocumentName: *policy.PolicyName,
 					Message:            err.Error(),
+					ResourceArn:        *user.Arn,
 				})
 				continue
 			}
@@ -747,6 +791,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
+					ResourceArn:        *user.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -754,6 +799,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					ResourceType:       string(shared.AwsIamUser),
 					PolicyDocumentName: *policy.PolicyName,
 					Message:            err.Error(),
+					ResourceArn:        *user.Arn,
 				})
 				continue
 			}
@@ -766,6 +812,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: *policy.PolicyName,
+					ResourceArn:        *user.Arn,
 				}
 				complianceResultsBuff <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -773,6 +820,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 					ResourceType:       string(shared.AwsIamUser),
 					PolicyDocumentName: *policy.PolicyName,
 					Message:            err.Error(),
+					ResourceArn:        *user.Arn,
 				})
 				continue
 			}
@@ -781,6 +829,7 @@ func processUserManagedPolicyCompliance(wg *sync.WaitGroup, user types.User, iam
 				Reasons:            isCompliantResult.Reasons,
 				Message:            isCompliantResult.Message,
 				PolicyDocumentName: *policy.PolicyName,
+				ResourceArn:        *user.Arn,
 			}
 			complianceResultsBuff <- complianceResult
 		}
@@ -807,6 +856,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 				Reasons:            nil,
 				Message:            err.Error(),
 				PolicyDocumentName: "",
+				ResourceArn:        *user.Arn,
 			}
 			resultsBuffer <- complianceResult
 			iamPolicyEvaluator.AddError(errormgr.Error{
@@ -814,6 +864,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 				ResourceType:       string(shared.AwsIamUser),
 				PolicyDocumentName: "",
 				Message:            err.Error(),
+				ResourceArn:        *user.Arn,
 			})
 			return
 		}
@@ -834,6 +885,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
+					ResourceArn:        *user.Arn,
 				}
 				resultsBuffer <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -841,6 +893,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 					ResourceType:       string(shared.AwsIamUser),
 					PolicyDocumentName: policyName,
 					Message:            err.Error(),
+					ResourceArn:        *user.Arn,
 				})
 				continue
 			}
@@ -855,6 +908,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
+					ResourceArn:        *user.Arn,
 				}
 				resultsBuffer <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -862,6 +916,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 					ResourceType:       string(shared.AwsIamUser),
 					PolicyDocumentName: policyName,
 					Message:            err.Error(),
+					ResourceArn:        *user.Arn,
 				})
 				continue
 			}
@@ -875,6 +930,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 					Reasons:            nil,
 					Message:            err.Error(),
 					PolicyDocumentName: policyName,
+					ResourceArn:        *user.Arn,
 				}
 				resultsBuffer <- complianceResult
 				iamPolicyEvaluator.AddError(errormgr.Error{
@@ -882,6 +938,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 					ResourceType:       string(shared.AwsIamUser),
 					PolicyDocumentName: policyName,
 					Message:            err.Error(),
+					ResourceArn:        *user.Arn,
 				})
 				continue
 			}
@@ -890,6 +947,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 				Reasons:            isCompliantResult.Reasons,
 				Message:            isCompliantResult.Message,
 				PolicyDocumentName: policyName,
+				ResourceArn:        *user.Arn,
 			}
 			resultsBuffer <- complianceResult
 		}
@@ -898,6 +956,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 
 // send evaluation to aws config
 func (i *_IAMPolicyEvaluator) sendEvaluations(evaluations []configServiceTypes.Evaluation, testMode bool) error {
+	log.Printf("test mode : [%v]\n", testMode)
 	metricMgr := i.GetMetricMgr()
 	// retrieve sdk config client
 	accountId := i.accountId
@@ -920,6 +979,7 @@ func (i *_IAMPolicyEvaluator) sendEvaluations(evaluations []configServiceTypes.E
 			Message:            err.Error(),
 			ResourceType:       "",
 			PolicyDocumentName: "",
+			ResourceArn:        "",
 		}
 		i.AddError(configErr)
 		return configErr
@@ -948,18 +1008,18 @@ func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActi
 		for evaluation := range evalsBuff {
 			{
 				i.exporter.AddEntry(evaluation)
-				truncatedAnnotation := truncateString(*evaluation.Annotation, 250)
-				evaluation.Annotation = &truncatedAnnotation
+				validAnnotation := shared.ValidateAnnotation(*evaluation.Annotation, 250)
+				evaluation.Annotation = aws.String(validAnnotation)
 				log.Printf("evaluation received for [%v]\n", *evaluation.ComplianceResourceId)
 				currentIndex++
 				batchEvaluations = append(batchEvaluations, evaluation)
 
 				if currentIndex == maxBatchCount {
-					err := i.sendEvaluations(batchEvaluations, false)
+					err := i.sendEvaluations(batchEvaluations, i.GetTestMode())
 					if err != nil {
 						log.Printf("error sending evaluations to aws config: [%v]\n", err)
 					}
-					mm.IncrementMetric(metricmgr.TotalEvaluations, int32(len(batchEvaluations)))
+					mm.IncrementMetric(metricmgr.TotalEvaluations, 1)
 					currentIndex = 0
 					batchEvaluations = nil
 					log.Printf("sent [%v] evaluations to aws config\n", len(batchEvaluations))
@@ -967,11 +1027,10 @@ func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActi
 			}
 		}
 		if currentIndex > 0 {
-			err := i.sendEvaluations(batchEvaluations, false)
+			err := i.sendEvaluations(batchEvaluations, i.GetTestMode())
 			if err != nil {
 				log.Printf("error sending evaluations to aws config: [%v]\n", err)
 			}
-			mm.IncrementMetric(metricmgr.TotalEvaluations, int32(len(batchEvaluations)))
 			log.Printf("sent [%v] evaluations to aws config\n", len(batchEvaluations))
 		}
 		log.Println("Exiting AWS config evals go routine")
@@ -1021,7 +1080,7 @@ func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActi
 		if err != nil {
 			log.Printf("error writing error log to csv : [%v]\n", err)
 		}
-		log.Printf("error log file written to csv\n")
+		log.Println("error log file written to csv")
 	}()
 
 	exportsWg := &sync.WaitGroup{}
@@ -1029,7 +1088,7 @@ func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActi
 	go func() {
 		defer exportsWg.Done()
 		errorWg.Wait()
-		key, err := i.exporter.ExportToS3(string(shared.ConfigFileBucketName), string(shared.ErrorLogFileObjectKey), prefix)
+		key, err := i.errorMgr.ExportToS3(string(shared.ConfigFileBucketName), string(shared.ErrorLogFileObjectKey), prefix)
 		if err != nil {
 			log.Printf("error writing error log to s3 : [%v]\n", err)
 		}
@@ -1043,20 +1102,20 @@ func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActi
 		defer executionLogWg.Done()
 		err := i.exporter.WriteToCSV(string(shared.ExecutionLogFileName))
 		if err != nil {
-			log.Printf("error writing execution log to csv : [%v]\n", err)
+			log.Printf("error writing config evaluations to csv : [%v]\n", err)
 		}
-		log.Printf("execution log file written to csv\n")
+		log.Println("config evaluations written to csv")
 	}()
 
 	exportsWg.Add(1)
 	go func() {
 		defer exportsWg.Done()
-		defer executionLogWg.Wait()
+		executionLogWg.Wait()
 		key, err := i.exporter.ExportToS3(string(shared.ConfigFileBucketName), string(shared.ExecutionLogFileName), prefix)
 		if err != nil {
-			log.Printf("error writing execution log to s3 : [%v]\n", err)
+			log.Printf("error writing config evaluations to s3 : [%v]\n", err)
 		}
-		log.Printf("execution log file written to s3 [%v]\n", key)
+		log.Printf("config evaluations written to s3 [%v]\n", key)
 	}()
 
 	exportsWg.Wait()
@@ -1107,11 +1166,6 @@ func (i *_IAMPolicyEvaluator) GetExporter() exporter.Exporter {
 	return i.exporter
 }
 
-// set event time
-func (i *_IAMPolicyEvaluator) SetEventTime(eventTime time.Time) {
-	i.eventTime = eventTime
-}
-
 // get event time
 func (i *_IAMPolicyEvaluator) GetEventTime() time.Time {
 	return i.eventTime
@@ -1132,15 +1186,6 @@ func (i *_IAMPolicyEvaluator) GetContext() context.Context {
 	return i.ctx
 }
 
-// set test mode
-func (i *_IAMPolicyEvaluator) SetTestMode(testMode string) {
-	if strings.ToLower(testMode) == "true" {
-		i.testMode = true
-	} else {
-		i.testMode = false
-	}
-}
-
 // get test mode
 func (i *_IAMPolicyEvaluator) GetTestMode() bool {
 	return i.testMode
@@ -1151,14 +1196,4 @@ func (i *_IAMPolicyEvaluator) AddError(err error) {
 	errorAssert := err.(errormgr.Error)
 	i.errorMgr.StoreError(errorAssert)
 
-}
-
-func truncateString(str string, maxLength int) string {
-	if len(str) > maxLength {
-		if maxLength > 3 {
-			return str[:maxLength-3] + "..."
-		}
-		return str[:maxLength]
-	}
-	return str
 }

@@ -42,7 +42,6 @@ func newEntryMgr() EntryMgr {
 // add entry
 func (em *_EntryMgr) AddEntry(entry configServiceTypes.Evaluation) error {
 	// based on compliance, add entry to corresponding slice
-	log.Printf("adding entry: [%+v]\n", entry)
 	switch entry.ComplianceType {
 	case configServiceTypes.ComplianceTypeInsufficientData:
 		{
