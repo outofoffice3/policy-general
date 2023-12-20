@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -32,7 +33,7 @@ type IAMPolicyEvaluator interface {
 	// ###############################################################################################################
 
 	// check iam identity policies for restricted actions
-	CheckAccessNotGranted(scope string, restrictedActions []string, accountId string)
+	CheckAccessNotGranted(scope string, restrictedActions []string, accountId []string)
 
 	// add error
 	AddError(err error)
@@ -955,7 +956,7 @@ func processUserInlinePolicyCompliance(wg *sync.WaitGroup, user types.User, iamC
 }
 
 // send evaluation to aws config
-func (i *_IAMPolicyEvaluator) sendEvaluations(evaluations []configServiceTypes.Evaluation, testMode bool) error {
+func (i *_IAMPolicyEvaluator) sendEvaluations(evalWrapper [100]shared.ConfigEval, testMode bool) error {
 	log.Printf("test mode : [%v]\n", testMode)
 	metricMgr := i.GetMetricMgr()
 	// retrieve sdk config client
@@ -963,6 +964,17 @@ func (i *_IAMPolicyEvaluator) sendEvaluations(evaluations []configServiceTypes.E
 	awscm := i.GetAWSClientMgr()
 	client, _ := awscm.GetSDKClient(accountId, awsclientmgr.CONFIG)
 	configClient := client.(*configservice.Client)
+
+	// append config evaluations from eval wrapper
+	var evaluations []configServiceTypes.Evaluation
+	for _, eval := range evalWrapper {
+		if eval.Empty {
+			log.Println("skipping empty eval")
+			continue
+		}
+		log.Println("appended eval to slice")
+		evaluations = append(evaluations, eval.Eval)
+	}
 
 	// send evaluations to aws config
 	_, err := configClient.PutEvaluations(context.Background(), &configservice.PutEvaluationsInput{
@@ -989,87 +1001,117 @@ func (i *_IAMPolicyEvaluator) sendEvaluations(evaluations []configServiceTypes.E
 }
 
 // check for restricted actions
-func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActions []string, accountId string) {
+func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActions []string, accountIds []string) {
 	gt := i.GetGoTracker()
 	mm := i.GetMetricMgr()
+	prefix := time.Now().Format(time.RFC3339) // create prefix for files written to s3
 
-	prefix := time.Now().Format(time.RFC3339)
-
+	// create buffer for aws config evaluations
 	evalsBuff := make(chan configServiceTypes.Evaluation, 105)
 	evalWg := &sync.WaitGroup{}
 	evalWg.Add(1)
 
+	// process aws config evaluations as they come into buffer
 	go func() {
 		defer evalWg.Done()
-		var batchEvaluations []configServiceTypes.Evaluation
-		maxBatchCount := 100
-		currentIndex := 0
+		maxBatchCount := int32(100)
+		var (
+			batchEvaluations [100]shared.ConfigEval
+			index            int32
+			currentIndex     int32
+			empty            bool
+		)
 
 		for evaluation := range evalsBuff {
 			{
 				i.exporter.AddEntry(evaluation)
+				empty = false
 				validAnnotation := shared.ValidateAnnotation(*evaluation.Annotation, 250)
 				evaluation.Annotation = aws.String(validAnnotation)
 				log.Printf("evaluation received for [%v]\n", *evaluation.ComplianceResourceId)
-				currentIndex++
-				batchEvaluations = append(batchEvaluations, evaluation)
+				index = atomic.AddInt32(&index, 1) - 1 // set index
+				batchEvaluations[index] = shared.ConfigEval{
+					Empty: false,
+					Eval:  evaluation,
+				}
+				mm.IncrementMetric(metricmgr.TotalEvaluations, 1) // increment total evaluations counter
 
-				if currentIndex == maxBatchCount {
+				currentIndex = atomic.LoadInt32(&index)
+				if currentIndex == (maxBatchCount - int32(1)) {
 					err := i.sendEvaluations(batchEvaluations, i.GetTestMode())
 					if err != nil {
 						log.Printf("error sending evaluations to aws config: [%v]\n", err)
 					}
-					mm.IncrementMetric(metricmgr.TotalEvaluations, 1)
-					currentIndex = 0
-					batchEvaluations = nil
-					log.Printf("sent [%v] evaluations to aws config\n", len(batchEvaluations))
+					// reset index to 0
+					atomic.StoreInt32(&index, 0)
+					empty = true
+					// clear out array
+					for i := 0; i < len(batchEvaluations); i++ {
+						batchEvaluations[i] = shared.ConfigEval{
+							Empty: true,
+							Eval:  configServiceTypes.Evaluation{},
+						}
+					}
+					totalEvaluations, _ := mm.GetMetric(metricmgr.TotalEvaluations)
+					log.Printf("sent [%v] evaluations to aws config\n", totalEvaluations)
 				}
 			}
 		}
-		if currentIndex > 0 {
+		if empty {
+			// send remaining evaluations
 			err := i.sendEvaluations(batchEvaluations, i.GetTestMode())
 			if err != nil {
 				log.Printf("error sending evaluations to aws config: [%v]\n", err)
 			}
-			log.Printf("sent [%v] evaluations to aws config\n", len(batchEvaluations))
+			log.Println("sent remaining  evaluations to aws config")
 		}
-		log.Println("Exiting AWS config evals go routine")
+		totalEvaluations, _ := mm.GetMetric(metricmgr.TotalEvaluations)
+		log.Printf("Exiting AWS config evals go routine after sending [%v] total evaluations", totalEvaluations)
 	}()
 
-	switch strings.ToLower(scope) {
-	case ROLES:
-		{
-			roleWg := &sync.WaitGroup{}
-			roleWg.Add(1)
-			go processAccountRoleCompliance(roleWg, restrictedActions, accountId, evalsBuff, i)
-			gt.TrackGoroutine("processAccountRoleCompliance", restrictedActions, accountId)
-			roleWg.Wait()
-		}
-	case USERS:
-		{
-			userWg := &sync.WaitGroup{}
-			userWg.Add(1)
-			go processAccountUserCompliance(userWg, restrictedActions, accountId, evalsBuff, i)
-			gt.TrackGoroutine("processAccountUserCompliance", restrictedActions, accountId)
-			userWg.Wait()
-		}
-	case ALL:
-		{
-			roleWg := &sync.WaitGroup{}
-			roleWg.Add(1)
-			go processAccountRoleCompliance(roleWg, restrictedActions, accountId, evalsBuff, i)
-			gt.TrackGoroutine("processAccountRoleCompliance", restrictedActions, accountId)
+	accountWg := &sync.WaitGroup{}
+	for _, accountId := range accountIds {
+		// process each account in a go routine
+		accountWg.Add(1)
+		go func(accountId string) {
+			defer accountWg.Done()
+			switch strings.ToLower(scope) {
+			case ROLES:
+				{
+					roleWg := &sync.WaitGroup{}
+					roleWg.Add(1)
+					go processAccountRoleCompliance(roleWg, restrictedActions, accountId, evalsBuff, i)
+					gt.TrackGoroutine("processAccountRoleCompliance", restrictedActions, accountId)
+					roleWg.Wait()
+				}
+			case USERS:
+				{
+					userWg := &sync.WaitGroup{}
+					userWg.Add(1)
+					go processAccountUserCompliance(userWg, restrictedActions, accountId, evalsBuff, i)
+					gt.TrackGoroutine("processAccountUserCompliance", restrictedActions, accountId)
+					userWg.Wait()
+				}
+			case ALL:
+				{
+					roleWg := &sync.WaitGroup{}
+					roleWg.Add(1)
+					go processAccountRoleCompliance(roleWg, restrictedActions, accountId, evalsBuff, i)
+					gt.TrackGoroutine("processAccountRoleCompliance", restrictedActions, accountId)
 
-			userWg := &sync.WaitGroup{}
-			userWg.Add(1)
-			go processAccountUserCompliance(userWg, restrictedActions, accountId, evalsBuff, i)
-			gt.TrackGoroutine("processAccountUserCompliance", restrictedActions, accountId)
-			userWg.Wait()
-			roleWg.Wait()
-		}
+					userWg := &sync.WaitGroup{}
+					userWg.Add(1)
+					go processAccountUserCompliance(userWg, restrictedActions, accountId, evalsBuff, i)
+					gt.TrackGoroutine("processAccountUserCompliance", restrictedActions, accountId)
+					userWg.Wait()
+					roleWg.Wait()
+				}
+			}
+		}(accountId)
 	}
-	close(evalsBuff)
-	evalWg.Wait()
+	accountWg.Wait() // wait for all accounts to complete processing
+	close(evalsBuff) // close aws config evaluations buffer
+	evalWg.Wait()    // wait for aws config evaluatoins to be sent to aws config
 
 	errorWg := &sync.WaitGroup{}
 	errorWg.Add(1)
@@ -1119,7 +1161,6 @@ func (i *_IAMPolicyEvaluator) CheckAccessNotGranted(scope string, restrictedActi
 	}()
 
 	exportsWg.Wait()
-	log.Printf("CheckAccessNotGranted completed for account [%v]\n", accountId)
 }
 
 // ###############################################################################################################
