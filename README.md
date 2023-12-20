@@ -47,7 +47,7 @@ This solution enhances security and compliance by enforcing IAM policy restricti
   |-- gotracker/                # go tracker
   |-- iampolicyevaluator/       # iam policy evaluator
   |-- metricmgr/                # metric manager
-  |-- shared/                   # shared 
+  |-- shared/                   # shared
 ```
 #### Package Descriptions
 

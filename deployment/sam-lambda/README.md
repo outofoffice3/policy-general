@@ -1,17 +1,11 @@
-# Deploying Custom AWS Config Rule & Lambda Function
-
-## Table of Contents
-- [Requirements](#requirements)
-- [Deployment Steps](#deployment-steps)
+# Deployment Guide
 
 ## Requirements
 
 * AWS CLI already configured with Administrator permission
-* [Docker installed](https://www.docker.com/community-edition)
-* [Golang](https://golang.org)
 * SAM CLI - [Install the SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
 
-## Deployment Steps
+## Build & Deploy
 
 1. **SAM build**
 
@@ -30,8 +24,6 @@ sam deploy --guided
 ```
 
 The --guided flag initiates an interactive deployment process, prompting you for the necessary parameters like the AWS region, stack name, and any specific configurations required for your AWS Lambda function and custom AWS Config rule.
-
-Your serverless application, including the AWS Lambda function and the custom AWS Config rule, will be operational in your AWS environment after a successful deployment. Check the AWS CloudFormation console for deployment status and details.
 
 # Appendix
 
