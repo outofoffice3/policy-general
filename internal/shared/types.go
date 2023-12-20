@@ -62,6 +62,12 @@ type AWSAccount struct {
 	RoleName  string `json:"roleName"`
 }
 
+// wrapper type for aws config evaluations
+type ConfigEval struct {
+	Empty bool
+	Eval  configServiceTypes.Evaluation
+}
+
 func JoinReasons(reasons []accessAnalyzerTypes.ReasonSummary, separator string) string {
 	var reasonsStrs []string
 	if reasons == nil {

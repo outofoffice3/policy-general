@@ -3,6 +3,7 @@ package entrymgr
 import (
 	"errors"
 	"log"
+	"sync"
 
 	configServiceTypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
 )
@@ -16,6 +17,7 @@ type EntryMgr interface {
 }
 
 type _EntryMgr struct {
+	mu               *sync.Mutex
 	insufficientData []configServiceTypes.Evaluation
 	compliant        []configServiceTypes.Evaluation
 	nonCompliant     []configServiceTypes.Evaluation
@@ -31,6 +33,7 @@ func Init() EntryMgr {
 // create new entry manager
 func newEntryMgr() EntryMgr {
 	em := &_EntryMgr{
+		mu:               &sync.Mutex{},
 		insufficientData: []configServiceTypes.Evaluation{},
 		compliant:        []configServiceTypes.Evaluation{},
 		nonCompliant:     []configServiceTypes.Evaluation{},
@@ -41,10 +44,13 @@ func newEntryMgr() EntryMgr {
 
 // add entry
 func (em *_EntryMgr) AddEntry(entry configServiceTypes.Evaluation) error {
+	em.mu.Lock()
+	defer em.mu.Unlock()
 	// based on compliance, add entry to corresponding slice
 	switch entry.ComplianceType {
 	case configServiceTypes.ComplianceTypeInsufficientData:
 		{
+
 			em.insufficientData = append(em.insufficientData, entry)
 		}
 	case configServiceTypes.ComplianceTypeCompliant:
