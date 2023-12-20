@@ -15,7 +15,7 @@ func HandleConfigEvent(event events.ConfigEvent, policyEvaluator iampolicyevalua
 	log.Printf("restrictedActions: [%v]\n", restrictedActions)
 	log.Printf("account Ids : [%v]", awsclientmgr.GetAccountIds())
 	accountIds := awsclientmgr.GetAccountIds()
-	go policyEvaluator.CheckAccessNotGranted(scope, restrictedActions, accountIds)
+	policyEvaluator.CheckAccessNotGranted(scope, restrictedActions, accountIds)
 	log.Printf("checkNoAccess for [%s] in accounts [%s]\n", scope, accountIds)
 	log.Printf("all accounts completed successfully")
 }

@@ -54,10 +54,14 @@ Resources:
           Action:
           - iam:ListUsers
           - iam:ListUserPolicies
+          - iam:ListAttachedUserPolicies
           - iam:GetUserPolicy
           - iam:ListRoles
           - iam:ListRolePolicies
+          - iam:LIstAttachedRolePolicies
           - iam:GetRolePolicy
+          - iam:GetPolicy
+          - iam:GetPolicyVersion
           - sts:AssumeRole
           - sts:GetCallerIdentity
           Resource: '*'
