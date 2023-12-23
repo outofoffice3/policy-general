@@ -1,5 +1,5 @@
 <div align="center">
- <img src="./graphics/generalshao.gif" alt="walk" width="250"/>
+ <img src="./graphics/aikahn2.png" alt="walk" width="250"/>
 </div>
 
 # Policy General

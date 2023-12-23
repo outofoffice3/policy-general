@@ -14,4 +14,6 @@ const (
 	TotalFailedUsers        Metric = "totalFailedUsers"
 	TotalFailedUserPolicies Metric = "totalFailedUserPolicies"
 	TotalFailedEvaluations  Metric = "totalFailedEvaluations"
+
+	TotalCacheHits Metric = "totalCacheHits"
 )

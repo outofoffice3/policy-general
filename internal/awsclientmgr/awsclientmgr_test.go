@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestAwsClientMgr(t *testing.T) {
+func TestAwsClientMgrPrivate(t *testing.T) {
 	assertion := assert.New(t)
 	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithSharedConfigProfile("PLACEDHOLDER"),
-		config.WithRegion("PLACEHOLDER"))
+		config.WithSharedConfigProfile("logadmin"),
+		config.WithRegion(string(shared.UsEast1)))
 	if err != nil {
 		panic("configuration error, " + err.Error())
 	}
@@ -27,8 +27,8 @@ func TestAwsClientMgr(t *testing.T) {
 	config := shared.Config{
 		AWSAccounts: []shared.AWSAccount{
 			{
-				AccountID: "PLACEHOLDER",
-				RoleName:  "PLACEHOLDER",
+				AccountID: "017608207428",
+				RoleName:  "arn:aws:iam::017608207428:role/checkNoAccessPolicyGeneral2023",
 			},
 		},
 		RestrictedActions: []string{
@@ -37,11 +37,10 @@ func TestAwsClientMgr(t *testing.T) {
 			"ec2:DescribeInstances",
 			"lambda:InvokeFunction",
 		},
-		Scope:    "all",
-		TestMode: "true",
+		Scope: "all",
 	}
 
-	accountId := "PLACEHOLDER"
+	accountId := "033197602013"
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	awscm, err := Init(AWSClientMgrInitConfig{
@@ -98,8 +97,8 @@ func TestAwsClientMgr(t *testing.T) {
 	errorConfig := shared.Config{
 		AWSAccounts: []shared.AWSAccount{
 			{
-				AccountID: "PLACEHOLDER",
-				RoleName:  "PLACEHOLDER",
+				AccountID: "017608207428",
+				RoleName:  "invalid iam role",
 			},
 		},
 		RestrictedActions: []string{
@@ -108,8 +107,7 @@ func TestAwsClientMgr(t *testing.T) {
 			"ec2:DescribeInstances",
 			"lambda:InvokeFunction",
 		},
-		Scope:    "all",
-		TestMode: "true",
+		Scope: "all",
 	}
 
 	// make invalid credentials to force error cases

@@ -51,6 +51,10 @@ func Init() MetricMgr {
 	totalFailedEvaluations := int32(0)
 	metricMgr.setMetric(TotalFailedEvaluations, &totalFailedEvaluations)
 
+	// cache metrics
+	totalCacheHits := int32(0)
+	metricMgr.setMetric(TotalCacheHits, &totalCacheHits)
+
 	return metricMgr
 
 }
